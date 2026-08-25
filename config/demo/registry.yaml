@@ -1,0 +1,6 @@
+# WSL 直连 docker.io 超时 → 镜像源改走 daocloud(本机拉 pause/busybox 已用它成功)。
+# k3d 会把此文件渲染进节点 containerd 的 registries.yaml。
+mirrors:
+  docker.io:
+    endpoint:
+      - "https://docker.m.daocloud.io"

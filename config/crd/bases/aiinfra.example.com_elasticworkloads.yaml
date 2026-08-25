@@ -1,0 +1,300 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: elasticworkloads.aiinfra.example.com
+spec:
+  group: aiinfra.example.com
+  names:
+    kind: ElasticWorkload
+    listKind: ElasticWorkloadList
+    plural: elasticworkloads
+    singular: elasticworkload
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ElasticWorkload is the Schema for the elasticworkloads API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: spec defines the desired state of ElasticWorkload
+            properties:
+              inference:
+                description: 'Inference workload: serving side backed by KV data plane
+                  (推理侧,数据面=KV 路由+vLLM)'
+                properties:
+                  command:
+                    description: Entrypoint command (vLLM 实例启动命令;L2 mock 用它跑 busybox)
+                    items:
+                      type: string
+                    type: array
+                  gpuPerInstance:
+                    description: GPUs per instance (util=0.35, 4090 校准:多实例近免费)
+                    format: int32
+                    type: integer
+                  image:
+                    description: Container image (vLLM)
+                    type: string
+                  maxReplicas:
+                    description: Ceiling
+                    format: int32
+                    type: integer
+                  minReplicas:
+                    description: Floor
+                    format: int32
+                    type: integer
+                  prefixCaching:
+                    description: Enable prefix caching (KV 数据面核心:前缀命中省 prefill)
+                    type: boolean
+                  replicas:
+                    description: Desired number of vLLM instances
+                    format: int32
+                    type: integer
+                required:
+                - gpuPerInstance
+                - image
+                - maxReplicas
+                - minReplicas
+                - replicas
+                type: object
+                x-kubernetes-validations:
+                - message: 'inference: minReplicas <= replicas <= maxReplicas'
+                  rule: self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas
+              scalingPolicy:
+                description: 'ScalingPolicy: 算法层 Rule1-5 的配置(参数全部来自算法层已交付证据,无新参数)'
+                properties:
+                  maxScaleStep:
+                    description: Max replicas change per decision cycle (渐进 ±1,算法层
+                      Rule5)
+                    format: int32
+                    type: integer
+                  minHoldDuration:
+                    description: Min hold duration in ticks after a scaling action
+                      (@5s = 120s,算法层 Rule4)
+                    format: int32
+                    type: integer
+                  slo:
+                    description: TTFT P95 SLO threshold in ms (算法层:300ms)
+                    format: int32
+                    type: integer
+                  targetMetric:
+                    description: Target metric (目前只支持 ttft_p95)
+                    enum:
+                    - ttft_p95
+                    type: string
+                required:
+                - maxScaleStep
+                - minHoldDuration
+                - slo
+                - targetMetric
+                type: object
+                x-kubernetes-validations:
+                - message: slo must be > 0
+                  rule: self.slo > 0
+                - message: minHoldDuration must be >= 0
+                  rule: self.minHoldDuration >= 0
+                - message: maxScaleStep must be >= 1
+                  rule: self.maxScaleStep >= 1
+              training:
+                description: 'Training workload: the long-running batch job (训练侧)'
+                properties:
+                  command:
+                    description: Entrypoint command
+                    items:
+                      type: string
+                    type: array
+                  gpuPerWorker:
+                    description: 'GPUs per worker (算法层 scale law: 吞吐 ∝ g^0.85)'
+                    format: int32
+                    type: integer
+                  image:
+                    description: Container image
+                    type: string
+                  maxReplicas:
+                    description: Ceiling
+                    format: int32
+                    type: integer
+                  minReplicas:
+                    description: 'Floor: elastic scaling must not go below this (弹性下限,不能把训练清零)'
+                    format: int32
+                    type: integer
+                  replicas:
+                    description: Desired number of training workers
+                    format: int32
+                    type: integer
+                required:
+                - gpuPerWorker
+                - image
+                - maxReplicas
+                - minReplicas
+                - replicas
+                type: object
+                x-kubernetes-validations:
+                - message: 'training: minReplicas <= replicas <= maxReplicas'
+                  rule: self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas
+            required:
+            - inference
+            - scalingPolicy
+            - training
+            type: object
+          status:
+            description: status defines the observed state of ElasticWorkload
+            properties:
+              conditions:
+                description: |-
+                  conditions represent the current state of the ElasticWorkload resource.
+                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
+
+                  Standard condition types include:
+                  - "Available": the resource is fully functional
+                  - "Progressing": the resource is being created or updated
+                  - "Degraded": the resource failed to reach or maintain its desired state
+
+                  The status of each condition is one of True, False, or Unknown.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              desiredReplicas:
+                description: |-
+                  DesiredReplicas is the controller's committed target allocation
+                  (single source of truth: apply converges child Deployments toward it).
+                  声明式目标收敛:决策先原子提交意图到 status,apply 朝它收敛,
+                  部分失败重试时不叠加漂移(修复旧两段式写的 6→5 丢卡)。
+                properties:
+                  inference:
+                    format: int32
+                    type: integer
+                  training:
+                    format: int32
+                    type: integer
+                required:
+                - inference
+                - training
+                type: object
+              phase:
+                description: 'Phase: Pending / Running / Deleting'
+                type: string
+              readyReplicas:
+                description: Observed ready replicas of both workloads
+                properties:
+                  inference:
+                    format: int32
+                    type: integer
+                  training:
+                    format: int32
+                    type: integer
+                required:
+                - inference
+                - training
+                type: object
+              scalingHistory:
+                description: Recent scaling decisions (audit trail,对应算法层决策日志回放)
+                items:
+                  description: ScalingEvent records one scaling decision (算法层决策日志的
+                    K8s 版)
+                  properties:
+                    action:
+                      description: e.g. "inference+1/training-1"
+                      type: string
+                    metric:
+                      description: e.g. "ttft_p95=412ms"
+                      type: string
+                    reason:
+                      description: e.g. "overload" / "recovery"
+                      type: string
+                    time:
+                      description: When the decision was applied
+                      format: date-time
+                      type: string
+                  required:
+                  - action
+                  - reason
+                  - time
+                  type: object
+                type: array
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        specReplicasPath: .spec.inference.replicas
+        statusReplicasPath: .status.readyReplicas.inference
+      status: {}
