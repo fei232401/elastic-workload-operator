@@ -26,7 +26,7 @@ type countingMetrics struct {
 	err   error
 }
 
-func (m *countingMetrics) TTFTP95MS(context.Context) (int32, error) {
+func (m *countingMetrics) TTFTP95MS(context.Context, aiinfrav1alpha1.MetricSource) (int32, error) {
 	m.calls++
 	return m.value, m.err
 }

@@ -22,65 +22,58 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
-// ElasticWorkloadSpec defines the desired state of ElasticWorkload
+// ElasticWorkloadSpec declares a training workload and an inference workload that share a replica budget.
 // +kubebuilder:validation:XValidation:rule="self.training.gpuPerWorker == self.inference.gpuPerInstance",message="only equal GPU units per replica are supported"
 type ElasticWorkloadSpec struct {
-	// Training workload: the long-running batch job (训练侧)
+	// Training is the preemptible workload that lends replicas to inference under load.
 	// +kubebuilder:validation:XValidation:rule="self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas",message="training: minReplicas <= replicas <= maxReplicas"
 	Training TrainingSpec `json:"training"`
 
-	// Inference workload: serving side backed by KV data plane (推理侧,数据面=KV 路由+vLLM)
+	// Inference is the latency-sensitive serving workload.
 	// +kubebuilder:validation:XValidation:rule="self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas",message="inference: minReplicas <= replicas <= maxReplicas"
 	Inference InferenceSpec `json:"inference"`
 
-	// ScalingPolicy: 项目一 Rule1-5 的配置(参数全部来自项目一已交付证据,无新参数)
+	// ScalingPolicy controls when replicas move between the two workloads.
 	// +kubebuilder:validation:XValidation:rule="self.slo > 0",message="slo must be > 0"
 	// +kubebuilder:validation:XValidation:rule="self.minHoldDuration >= 0",message="minHoldDuration must be >= 0"
 	// +kubebuilder:validation:XValidation:rule="self.maxScaleStep >= 1",message="maxScaleStep must be >= 1"
 	ScalingPolicy ScalingPolicy `json:"scalingPolicy"`
 }
 
-// TrainingSpec defines the training workload (long-running batch job)
+// TrainingSpec defines the training workload.
 type TrainingSpec struct {
-	// Desired number of training workers
+	// Replicas is the initial number of training workers.
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="initial replicas are immutable; recreate the workload to change its budget"
 	Replicas int32 `json:"replicas"`
-	// Floor: elastic scaling must not go below this (弹性下限,不能把训练清零)
+	// MinReplicas is the lowest training replica count the controller may set.
 	MinReplicas int32 `json:"minReplicas"`
-	// Ceiling
+	// MaxReplicas is the highest training replica count the controller may set.
 	MaxReplicas int32 `json:"maxReplicas"`
-	// GPUs per worker (项目一 scale law: 吞吐 ∝ g^0.85)
+	// GPUPerWorker is the nvidia.com/gpu count requested by each worker; zero requests no GPU.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="GPU units are immutable"
-	GPUPerWorker int32 `json:"gpuPerWorker"`
-	// Container image
-	Image string `json:"image"`
-	// Entrypoint command
-	Command   []string          `json:"command,omitempty"`
-	Resources WorkloadResources `json:"resources,omitempty"`
+	GPUPerWorker int32             `json:"gpuPerWorker"`
+	Image        string            `json:"image"`
+	Command      []string          `json:"command,omitempty"`
+	Resources    WorkloadResources `json:"resources,omitempty"`
 }
 
-// InferenceSpec defines the inference workload (serving, backed by KV data plane)
+// InferenceSpec defines the inference workload.
 type InferenceSpec struct {
-	// Desired number of vLLM instances
+	// Replicas is the initial number of inference instances.
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="initial replicas are immutable; recreate the workload to change its budget"
 	Replicas int32 `json:"replicas"`
-	// Floor
+	// MinReplicas is the lowest inference replica count the controller may set.
 	MinReplicas int32 `json:"minReplicas"`
-	// Ceiling
+	// MaxReplicas is the highest inference replica count the controller may set.
 	MaxReplicas int32 `json:"maxReplicas"`
-	// GPUs per instance (util=0.35, 4090 校准:多实例近免费)
+	// GPUPerInstance is the nvidia.com/gpu count requested by each instance; zero requests no GPU.
 	// +kubebuilder:validation:Minimum=0
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="GPU units are immutable"
-	GPUPerInstance int32 `json:"gpuPerInstance"`
-	// Container image (vLLM)
-	Image string `json:"image"`
-	// Enable prefix caching (KV 数据面核心:前缀命中省 prefill)
-	PrefixCaching bool `json:"prefixCaching,omitempty"`
-	// Entrypoint command (vLLM 实例启动命令;L2 mock 用它跑 busybox)
+	GPUPerInstance int32  `json:"gpuPerInstance"`
+	Image          string `json:"image"`
+	// PrefixCaching is rejected by validation; engine flags belong in Command.
+	PrefixCaching bool              `json:"prefixCaching,omitempty"`
 	Command       []string          `json:"command,omitempty"`
 	Resources     WorkloadResources `json:"resources,omitempty"`
 	ReadinessHTTP *HTTPHealthCheck  `json:"readinessHTTP,omitempty"`
@@ -100,62 +93,66 @@ type WorkloadResources struct {
 	Limits   corev1.ResourceList `json:"limits,omitempty"`
 }
 
-// ScalingPolicy is the config of 项目一 Rule1-5 (参数来源全部为项目一已交付证据)
+// ScalingPolicy moves replicas to inference when TTFT P95 exceeds the SLO and returns them below 60% of it.
 type ScalingPolicy struct {
-	// Target metric (目前只支持 ttft_p95)
 	// +kubebuilder:validation:Enum=ttft_p95
 	TargetMetric string `json:"targetMetric"`
-	// TTFT P95 SLO threshold in ms (项目一:300ms)
+	// SLO is the TTFT P95 threshold in milliseconds.
 	SLO int32 `json:"slo"`
-	// Min hold duration in ticks after a scaling action (@5s = 120s,项目一 Rule4)
+	// MinHoldDuration is the number of 5s ticks to wait after a scaling action before deciding again.
 	MinHoldDuration int32 `json:"minHoldDuration"`
-	// Max replicas change per decision cycle (渐进 ±1,项目一 Rule5)
+	// MaxScaleStep is the largest replica change per decision.
 	MaxScaleStep int32 `json:"maxScaleStep"`
+	// Metrics selects the TTFT source for this workload; unset fields fall back to the controller defaults.
+	// +optional
+	Metrics *MetricSource `json:"metrics,omitempty"`
+}
+
+// MetricSource identifies where a workload's TTFT P95 is read from.
+type MetricSource struct {
+	// RouterURL overrides the controller's --router-url for this workload.
+	// +kubebuilder:validation:Pattern=`^https?://`
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	RouterURL string `json:"routerURL,omitempty"`
+	// Model is the logical model whose TTFT window is requested; the router must echo it back.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=200
+	// +optional
+	Model string `json:"model,omitempty"`
 }
 
 // ElasticWorkloadStatus defines the observed state of ElasticWorkload.
 type ElasticWorkloadStatus struct {
-	// Phase: Pending / Running / Deleting
+	// Phase is one of Pending, Progressing, Running, Degraded or Deleting.
 	Phase string `json:"phase,omitempty"`
-	// Observed ready replicas of both workloads
+	// ReadyReplicas is the observed ready replica count of each child Deployment.
 	ReadyReplicas WorkloadReplicas `json:"readyReplicas,omitempty"`
-	// DesiredReplicas is the controller's committed target allocation
-	// (single source of truth: apply converges child Deployments toward it).
-	// 幕8 声明式目标收敛:决策先原子提交意图到 status,apply 朝它收敛,
-	// 部分失败重试时不叠加漂移(修复旧两段式写的 6→5 丢卡)。
+	// DesiredReplicas is the committed target allocation that child Deployments converge to.
 	DesiredReplicas WorkloadReplicas `json:"desiredReplicas,omitempty"`
-	// conditions represent the current state of the ElasticWorkload resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions include Initialized, Ready, Progressing and MetricsReady.
 	// +listType=map
 	// +listMapKey=type
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// Recent scaling decisions (audit trail,对应项目一决策日志回放)
+	// ScalingHistory keeps the most recent committed decisions.
 	ScalingHistory []ScalingEvent `json:"scalingHistory,omitempty"`
 }
 
-// WorkloadReplicas holds ready replica counts for both workloads
+// WorkloadReplicas holds a replica count for each workload.
 type WorkloadReplicas struct {
 	Training  int32 `json:"training"`
 	Inference int32 `json:"inference"`
 }
 
-// ScalingEvent records one scaling decision (项目一决策日志的 K8s 版)
+// ScalingEvent records one committed scaling decision.
 type ScalingEvent struct {
-	// When the decision was applied
 	Time metav1.Time `json:"time"`
-	// e.g. "inference+1/training-1"
+	// Action is the replica delta, for example "inference+1/training-1".
 	Action string `json:"action"`
-	// e.g. "overload" / "recovery"
+	// Reason is overload or recovery.
 	Reason string `json:"reason"`
-	// e.g. "ttft_p95=412ms"
+	// Metric is the observation that triggered the decision, for example "ttft_p95=412ms".
 	Metric string `json:"metric,omitempty"`
 }
 

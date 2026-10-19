@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
 func TestMetricValidation_HTTPContract(t *testing.T) {
@@ -51,7 +53,7 @@ func TestMetricValidation_HTTPContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = reader.TTFTP95MS(context.Background())
+			_, err = reader.TTFTP95MS(context.Background(), aiinfrav1alpha1.MetricSource{})
 			if item.reason == "" {
 				if err != nil {
 					t.Fatal(err)

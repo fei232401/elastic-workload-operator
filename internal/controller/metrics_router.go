@@ -7,18 +7,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
-// routerMetrics 是 MetricsReader 的真实现:HTTP GET KV Router(数据面)的 ttft_p95。
-// 端点约定(数据面是我们自己的,格式自定,非行业标准):
-//
-//	GET {base}/ttft_p95 → 200 {"ttft_p95_ms": 412}
-//
-// 若将来接真实 Prometheus(查 promql),换一个实现即可,接口不变(面试点:依赖倒置)。
 type routerMetrics struct {
 	url    string
 	client *http.Client
@@ -45,8 +42,6 @@ func invalidMetric(reason, message string) error {
 	return &metricValidationError{reason: reason, message: message}
 }
 
-// NewRouterMetrics 构造读 KV Router 指标的 MetricsReader。
-// timeout:读指标必须快,慢了会拖住 reconcile 循环(2s 足够集群内访问)。
 func NewRouterMetrics(url string) MetricsReader {
 	reader, _ := NewRouterMetricsWithPolicy(url, MetricsPolicy{
 		MaxAge:        30 * time.Second,
@@ -71,6 +66,7 @@ type ttftResponse struct {
 	TTFTP95MS   *int32     `json:"ttft_p95_ms"`
 	ObservedAt  *time.Time `json:"observed_at"`
 	SampleCount *int64     `json:"sample_count"`
+	Model       *string    `json:"model"`
 }
 
 func (m *routerMetrics) validateSample(out ttftResponse, now time.Time) error {
@@ -95,9 +91,19 @@ func (m *routerMetrics) validateSample(out ttftResponse, now time.Time) error {
 	return nil
 }
 
-// TTFTP95MS 发 HTTP GET 读 ttft_p95。失败返回 error → Reconcile 退避重试,不崩。
-func (m *routerMetrics) TTFTP95MS(ctx context.Context) (int32, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.url+"/ttft_p95", nil)
+func (m *routerMetrics) endpoint(source aiinfrav1alpha1.MetricSource) string {
+	base := m.url
+	if source.RouterURL != "" {
+		base = strings.TrimRight(source.RouterURL, "/")
+	}
+	if source.Model == "" {
+		return base + "/ttft_p95"
+	}
+	return base + "/ttft_p95?" + url.Values{"model": {source.Model}}.Encode()
+}
+
+func (m *routerMetrics) TTFTP95MS(ctx context.Context, source aiinfrav1alpha1.MetricSource) (int32, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.endpoint(source), nil)
 	if err != nil {
 		return 0, err
 	}
@@ -128,6 +134,9 @@ func (m *routerMetrics) TTFTP95MS(ctx context.Context) (int32, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return 0, invalidMetric("InvalidMetricPayload", "router response must contain exactly one JSON object")
+	}
+	if source.Model != "" && (out.Model == nil || *out.Model != source.Model) {
+		return 0, invalidMetric("MetricModelMismatch", fmt.Sprintf("router did not return the TTFT window for model %q", source.Model))
 	}
 	if err := m.validateSample(out, time.Now()); err != nil {
 		return 0, err

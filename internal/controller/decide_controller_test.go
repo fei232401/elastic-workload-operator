@@ -14,11 +14,15 @@ import (
 )
 
 type fakeMetrics struct {
-	ttft int32
-	err  error
+	ttft   int32
+	err    error
+	source aiinfrav1alpha1.MetricSource
 }
 
-func (f *fakeMetrics) TTFTP95MS(_ context.Context) (int32, error) { return f.ttft, f.err }
+func (f *fakeMetrics) TTFTP95MS(_ context.Context, source aiinfrav1alpha1.MetricSource) (int32, error) {
+	f.source = source
+	return f.ttft, f.err
+}
 
 func int32Ptr(n int32) *int32 { return &n }
 
@@ -146,5 +150,17 @@ func TestDecideStep_MinHoldExpired(t *testing.T) {
 	}
 	if dec.Action != "scale_inference_up" {
 		t.Fatalf("min_hold 已过期应放行, got %+v", dec)
+	}
+}
+
+func TestDecideStep_UsesWorkloadMetricSource(t *testing.T) {
+	r, ew := newTestEnv(t, 412, nil)
+	ew.Spec.ScalingPolicy.Metrics = &aiinfrav1alpha1.MetricSource{RouterURL: "http://router-b:8080", Model: "qwen-3b"}
+	if _, err := r.decideStep(context.Background(), ew); err != nil {
+		t.Fatal(err)
+	}
+	got := r.Metrics.(*fakeMetrics).source
+	if got.RouterURL != "http://router-b:8080" || got.Model != "qwen-3b" {
+		t.Fatalf("metric source not taken from the workload: %+v", got)
 	}
 }

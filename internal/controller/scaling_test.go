@@ -1,19 +1,18 @@
 package controller
 
 import (
+	"math"
 	"testing"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
-// 测试目标 = "翻译是否正确"(设计分层 L1);决策算法本身的正确性由项目一 135 tests 覆盖,不重测。
-
 func policy() *aiinfrav1alpha1.ScalingPolicy {
 	return &aiinfrav1alpha1.ScalingPolicy{
 		TargetMetric:    "ttft_p95",
-		SLO:             300, // 项目一:300ms
-		MinHoldDuration: 24,  // 项目一:24 tick @5s = 120s
-		MaxScaleStep:    1,   // 项目一:渐进 ±1
+		SLO:             300,
+		MinHoldDuration: 24,
+		MaxScaleStep:    1,
 	}
 }
 
@@ -34,8 +33,8 @@ func TestDecide(t *testing.T) {
 		want string
 		dI   int32
 		dT   int32
-		wT   int32 // 目标训练副本数(声明式收敛意图)
-		wI   int32 // 目标推理副本数
+		wT   int32
+		wI   int32
 	}{
 		{"过载→让渡:推理+1 训练-1", 412, cur(4, 2), "scale_inference_up", 1, -1, 3, 3},
 		{"恰好 SLO=300 属死区(规则是 > 才过载)", 300, cur(4, 2), "none", 0, 0, 4, 2},
@@ -80,5 +79,14 @@ func TestDecide_BothSidesBound(t *testing.T) {
 	if got.Action != "scale_inference_up" || got.InferenceDelta != 1 || got.TrainingDelta != -1 ||
 		got.DesiredTraining != 2 || got.DesiredInference != 3 {
 		t.Fatalf("双边界钳制: got %+v, want +1/-1 目标(2,3)", got)
+	}
+}
+
+func TestDecide_LargeSLODoesNotOverflow(t *testing.T) {
+	p := policy()
+	p.SLO = math.MaxInt32
+	got := decide(math.MaxInt32/2, cur(4, 2), p, 2, 8, 1, 4)
+	if got.Action != "scale_inference_down" || got.DesiredTraining != 5 || got.DesiredInference != 1 {
+		t.Fatalf("want recovery below 60%% of a large SLO, got %+v", got)
 	}
 }

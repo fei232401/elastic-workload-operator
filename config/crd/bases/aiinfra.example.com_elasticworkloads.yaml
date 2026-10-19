@@ -40,16 +40,15 @@ spec:
             description: spec defines the desired state of ElasticWorkload
             properties:
               inference:
-                description: 'Inference workload: serving side backed by KV data plane
-                  (推理侧,数据面=KV 路由+vLLM)'
+                description: Inference is the latency-sensitive serving workload.
                 properties:
                   command:
-                    description: Entrypoint command (vLLM 实例启动命令;L2 mock 用它跑 busybox)
                     items:
                       type: string
                     type: array
                   gpuPerInstance:
-                    description: GPUs per instance (util=0.35, 4090 校准:多实例近免费)
+                    description: GPUPerInstance is the nvidia.com/gpu count requested
+                      by each instance; zero requests no GPU.
                     format: int32
                     minimum: 0
                     type: integer
@@ -57,18 +56,20 @@ spec:
                     - message: GPU units are immutable
                       rule: self == oldSelf
                   image:
-                    description: Container image (vLLM)
                     type: string
                   maxReplicas:
-                    description: Ceiling
+                    description: MaxReplicas is the highest inference replica count
+                      the controller may set.
                     format: int32
                     type: integer
                   minReplicas:
-                    description: Floor
+                    description: MinReplicas is the lowest inference replica count
+                      the controller may set.
                     format: int32
                     type: integer
                   prefixCaching:
-                    description: Enable prefix caching (KV 数据面核心:前缀命中省 prefill)
+                    description: PrefixCaching is rejected by validation; engine flags
+                      belong in Command.
                     type: boolean
                   readinessHTTP:
                     properties:
@@ -85,7 +86,7 @@ spec:
                     - port
                     type: object
                   replicas:
-                    description: Desired number of vLLM instances
+                    description: Replicas is the initial number of inference instances.
                     format: int32
                     type: integer
                     x-kubernetes-validations:
@@ -126,24 +127,40 @@ spec:
                 - message: 'inference: minReplicas <= replicas <= maxReplicas'
                   rule: self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas
               scalingPolicy:
-                description: 'ScalingPolicy: 项目一 Rule1-5 的配置(参数全部来自项目一已交付证据,无新参数)'
+                description: ScalingPolicy controls when replicas move between the
+                  two workloads.
                 properties:
                   maxScaleStep:
-                    description: Max replicas change per decision cycle (渐进 ±1,项目一
-                      Rule5)
+                    description: MaxScaleStep is the largest replica change per decision.
                     format: int32
                     type: integer
+                  metrics:
+                    description: Metrics selects the TTFT source for this workload;
+                      unset fields fall back to the controller defaults.
+                    properties:
+                      model:
+                        description: Model is the logical model whose TTFT window
+                          is requested; the router must echo it back.
+                        maxLength: 200
+                        minLength: 1
+                        type: string
+                      routerURL:
+                        description: RouterURL overrides the controller's --router-url
+                          for this workload.
+                        maxLength: 2048
+                        pattern: ^https?://
+                        type: string
+                    type: object
                   minHoldDuration:
-                    description: Min hold duration in ticks after a scaling action
-                      (@5s = 120s,项目一 Rule4)
+                    description: MinHoldDuration is the number of 5s ticks to wait
+                      after a scaling action before deciding again.
                     format: int32
                     type: integer
                   slo:
-                    description: TTFT P95 SLO threshold in ms (项目一:300ms)
+                    description: SLO is the TTFT P95 threshold in milliseconds.
                     format: int32
                     type: integer
                   targetMetric:
-                    description: Target metric (目前只支持 ttft_p95)
                     enum:
                     - ttft_p95
                     type: string
@@ -161,15 +178,16 @@ spec:
                 - message: maxScaleStep must be >= 1
                   rule: self.maxScaleStep >= 1
               training:
-                description: 'Training workload: the long-running batch job (训练侧)'
+                description: Training is the preemptible workload that lends replicas
+                  to inference under load.
                 properties:
                   command:
-                    description: Entrypoint command
                     items:
                       type: string
                     type: array
                   gpuPerWorker:
-                    description: 'GPUs per worker (项目一 scale law: 吞吐 ∝ g^0.85)'
+                    description: GPUPerWorker is the nvidia.com/gpu count requested
+                      by each worker; zero requests no GPU.
                     format: int32
                     minimum: 0
                     type: integer
@@ -177,18 +195,19 @@ spec:
                     - message: GPU units are immutable
                       rule: self == oldSelf
                   image:
-                    description: Container image
                     type: string
                   maxReplicas:
-                    description: Ceiling
+                    description: MaxReplicas is the highest training replica count
+                      the controller may set.
                     format: int32
                     type: integer
                   minReplicas:
-                    description: 'Floor: elastic scaling must not go below this (弹性下限,不能把训练清零)'
+                    description: MinReplicas is the lowest training replica count
+                      the controller may set.
                     format: int32
                     type: integer
                   replicas:
-                    description: Desired number of training workers
+                    description: Replicas is the initial number of training workers.
                     format: int32
                     type: integer
                     x-kubernetes-validations:
@@ -240,16 +259,8 @@ spec:
             description: status defines the observed state of ElasticWorkload
             properties:
               conditions:
-                description: |-
-                  conditions represent the current state of the ElasticWorkload resource.
-                  Each condition has a unique type and reflects the status of a specific aspect of the resource.
-
-                  Standard condition types include:
-                  - "Available": the resource is fully functional
-                  - "Progressing": the resource is being created or updated
-                  - "Degraded": the resource failed to reach or maintain its desired state
-
-                  The status of each condition is one of True, False, or Unknown.
+                description: Conditions include Initialized, Ready, Progressing and
+                  MetricsReady.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -309,11 +320,8 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               desiredReplicas:
-                description: |-
-                  DesiredReplicas is the controller's committed target allocation
-                  (single source of truth: apply converges child Deployments toward it).
-                  幕8 声明式目标收敛:决策先原子提交意图到 status,apply 朝它收敛,
-                  部分失败重试时不叠加漂移(修复旧两段式写的 6→5 丢卡)。
+                description: DesiredReplicas is the committed target allocation that
+                  child Deployments converge to.
                 properties:
                   inference:
                     format: int32
@@ -326,10 +334,12 @@ spec:
                 - training
                 type: object
               phase:
-                description: 'Phase: Pending / Running / Deleting'
+                description: Phase is one of Pending, Progressing, Running, Degraded
+                  or Deleting.
                 type: string
               readyReplicas:
-                description: Observed ready replicas of both workloads
+                description: ReadyReplicas is the observed ready replica count of
+                  each child Deployment.
                 properties:
                   inference:
                     format: int32
@@ -342,22 +352,21 @@ spec:
                 - training
                 type: object
               scalingHistory:
-                description: Recent scaling decisions (audit trail,对应项目一决策日志回放)
+                description: ScalingHistory keeps the most recent committed decisions.
                 items:
-                  description: ScalingEvent records one scaling decision (项目一决策日志的
-                    K8s 版)
+                  description: ScalingEvent records one committed scaling decision.
                   properties:
                     action:
-                      description: e.g. "inference+1/training-1"
+                      description: Action is the replica delta, for example "inference+1/training-1".
                       type: string
                     metric:
-                      description: e.g. "ttft_p95=412ms"
+                      description: Metric is the observation that triggered the decision,
+                        for example "ttft_p95=412ms".
                       type: string
                     reason:
-                      description: e.g. "overload" / "recovery"
+                      description: Reason is overload or recovery.
                       type: string
                     time:
-                      description: When the decision was applied
                       format: date-time
                       type: string
                   required:

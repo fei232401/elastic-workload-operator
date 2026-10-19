@@ -4,7 +4,7 @@
 //
 // 端点:
 //
-//	GET /ttft_p95          → {"ttft_p95_ms": <值>}
+//	GET /ttft_p95[?model=] → {"ttft_p95_ms": <值>, "model": <请求的模型>}
 //	GET /control?ttft=600  → 手动覆盖 ttft(演示"我调高负载,算子开始让卡")
 //	GET /control?auto=1    → 回到脚本曲线
 package main
@@ -68,11 +68,16 @@ func main() {
 		}
 		count := sampleCount
 		mu.Unlock()
+		model := r.URL.Query().Get("model")
+		if model == "" {
+			model = os.Getenv("MODEL")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(map[string]any{
 			"ttft_p95_ms":  value,
 			"observed_at":  observedAt,
 			"sample_count": count,
+			"model":        model,
 			"source":       "mock",
 		}); err != nil {
 			log.Printf("Could not encode mock metric: %v", err)
