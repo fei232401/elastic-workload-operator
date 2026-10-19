@@ -1,0 +1,160 @@
+{
+  "started_at": "2026-10-19T12:26:03.848374+00:00",
+  "timeline": [
+    {
+      "name": "trainer_b_admitted_by_borrowing",
+      "t": 0.8,
+      "usage": {
+        "team-a": {
+          "admitted": 0,
+          "pending": 0,
+          "usage": [
+            {
+              "name": "default-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                },
+                {
+                  "borrowed": "0",
+                  "name": "memory",
+                  "total": "0"
+                }
+              ]
+            }
+          ]
+        },
+        "team-b": {
+          "admitted": 0,
+          "pending": 0,
+          "usage": [
+            {
+              "name": "default-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                },
+                {
+                  "borrowed": "0",
+                  "name": "memory",
+                  "total": "0"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "trainer_b_training",
+      "t": 172.6,
+      "last_progress": {
+        "time": 1792412934.4381921,
+        "event": "progress",
+        "step": 100,
+        "loss": 0.06523,
+        "world_size": 1
+      }
+    },
+    {
+      "name": "trainer_b_preempted",
+      "t": 173.9,
+      "seconds_after_submit": 1.3,
+      "evicted": {
+        "lastTransitionTime": "2026-10-19T12:28:56Z",
+        "message": "Preempted to accommodate a workload (UID: caf9121e-85b6-452c-9fed-abca60c52018, JobUID: 0e9f014d-154b-4471-b8a2-fbee5dc6d20d) due to reclamation within the cohort; preemptor path: /shared-pool/team-a; preemptee path: /shared-pool/team-b",
+        "observedGeneration": 1,
+        "reason": "Preempted",
+        "status": "True",
+        "type": "Evicted"
+      },
+      "preempted": {
+        "lastTransitionTime": "2026-10-19T12:28:56Z",
+        "message": "Preempted to accommodate a workload (UID: caf9121e-85b6-452c-9fed-abca60c52018, JobUID: 0e9f014d-154b-4471-b8a2-fbee5dc6d20d) due to reclamation within the cohort; preemptor path: /shared-pool/team-a; preemptee path: /shared-pool/team-b",
+        "reason": "InCohortReclamation",
+        "status": "True",
+        "type": "Preempted"
+      }
+    },
+    {
+      "name": "urgent_a_admitted",
+      "t": 174.1,
+      "seconds_after_submit": 1.4,
+      "usage": {
+        "team-a": {
+          "admitted": 0,
+          "pending": 1,
+          "usage": [
+            {
+              "name": "default-flavor",
+              "resources": [
+                {
+                  "borrowed": "0",
+                  "name": "cpu",
+                  "total": "0"
+                },
+                {
+                  "borrowed": "0",
+                  "name": "memory",
+                  "total": "0"
+                }
+              ]
+            }
+          ]
+        },
+        "team-b": {
+          "admitted": 1,
+          "pending": 0,
+          "usage": [
+            {
+              "name": "default-flavor",
+              "resources": [
+                {
+                  "borrowed": "200m",
+                  "name": "cpu",
+                  "total": "600m"
+                },
+                {
+                  "borrowed": "0",
+                  "name": "memory",
+                  "total": "512Mi"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "trainer_b_readmitted",
+      "t": 225.7,
+      "seconds_after_submit": 53.1
+    },
+    {
+      "name": "trainer_b_resumed",
+      "t": 235.2,
+      "checkpoint_on_preemption": {
+        "time": 1792412937.8414094,
+        "event": "checkpoint",
+        "step": 102,
+        "checkpoint_id": 0,
+        "reason": "member_leaving",
+        "world_size": 1
+      },
+      "resume": {
+        "time": 1792412995.2386076,
+        "event": "resume",
+        "step": 102,
+        "world_size": 1
+      },
+      "resumed_from_saved_step": true,
+      "urgent_status": 1
+    }
+  ],
+  "status": "passed",
+  "finished_at": "2026-10-19T12:29:59.096426+00:00"
+}
