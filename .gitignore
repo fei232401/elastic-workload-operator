@@ -28,3 +28,7 @@ go.work
 
 # Kubeconfig might contain secrets
 *.kubeconfig
+artifacts/
+.state/
+__pycache__/
+*.pyc

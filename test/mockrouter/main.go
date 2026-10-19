@@ -12,17 +12,21 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
 
 var (
-	start      = time.Now()
-	mu         sync.Mutex
-	manual     int32
-	hasManual  bool
+	start       = time.Now()
+	mu          sync.Mutex
+	manual      int32
+	hasManual   bool
+	sampleCount int64 = 100
+	frozenAt    *time.Time
 )
 
 // scriptedTTFT 脚本曲线(三阶段演示全闭环):
@@ -45,34 +49,87 @@ func scriptedTTFT() int32 {
 }
 
 func main() {
+	if initial := os.Getenv("INITIAL_TTFT_MS"); initial != "" {
+		value, err := strconv.ParseInt(initial, 10, 32)
+		if err != nil || value < 0 {
+			log.Fatal("INITIAL_TTFT_MS must be a non-negative int32")
+		}
+		manual, hasManual = int32(value), true
+	}
 	http.HandleFunc("/ttft_p95", func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		v := int32(150)
+		value := scriptedTTFT()
 		if hasManual {
-			v = manual
-		} else {
-			v = scriptedTTFT()
+			value = manual
 		}
+		observedAt := time.Now().UTC()
+		if frozenAt != nil {
+			observedAt = *frozenAt
+		}
+		count := sampleCount
 		mu.Unlock()
-		_ = json.NewEncoder(w).Encode(map[string]int32{"ttft_p95_ms": v})
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"ttft_p95_ms":  value,
+			"observed_at":  observedAt,
+			"sample_count": count,
+			"source":       "mock",
+		}); err != nil {
+			log.Printf("Could not encode mock metric: %v", err)
+		}
 	})
 
 	http.HandleFunc("/control", func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
 		q := r.URL.Query()
+		if !q.Has("auto") && !q.Has("ttft") && !q.Has("samples") && !q.Has("freeze") {
+			http.Error(w, "expected ttft, samples, freeze or auto", http.StatusBadRequest)
+			return
+		}
+		var value int64
+		var count int64
+		var err error
+		if q.Has("ttft") {
+			value, err = strconv.ParseInt(q.Get("ttft"), 10, 32)
+			if err != nil {
+				http.Error(w, "ttft must be an int32", http.StatusBadRequest)
+				return
+			}
+		}
+		if q.Has("samples") {
+			count, err = strconv.ParseInt(q.Get("samples"), 10, 64)
+			if err != nil || count < 0 {
+				http.Error(w, "samples must be a non-negative integer", http.StatusBadRequest)
+				return
+			}
+		}
+		if q.Has("freeze") && q.Get("freeze") != "0" && q.Get("freeze") != "1" {
+			http.Error(w, "freeze must be 0 or 1", http.StatusBadRequest)
+			return
+		}
+		if q.Has("auto") && q.Get("auto") != "1" {
+			http.Error(w, "auto must be 1", http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
 		if q.Get("auto") == "1" {
-			hasManual = false
-			fmt.Fprintln(w, "back to scripted curve")
-			return
+			hasManual, sampleCount, frozenAt = false, 100, nil
 		}
-		var v int32
-		if _, err := fmt.Sscanf(q.Get("ttft"), "%d", &v); err != nil {
-			http.Error(w, "usage: /control?ttft=<ms> 或 /control?auto=1", http.StatusBadRequest)
-			return
+		if q.Has("ttft") {
+			manual, hasManual = int32(value), true
 		}
-		manual, hasManual = v, true
-		fmt.Fprintf(w, "manual ttft set to %dms\n", v)
+		if q.Has("samples") {
+			sampleCount = count
+		}
+		if q.Get("freeze") == "1" && frozenAt == nil {
+			stamp := time.Now().UTC()
+			frozenAt = &stamp
+		} else if q.Get("freeze") == "0" {
+			frozenAt = nil
+		}
+		mu.Unlock()
+		if _, err := fmt.Fprintln(w, "mock controls updated"); err != nil {
+			log.Printf("Could not write mock response: %v", err)
+		}
 	})
 
 	addr := ":8080"
@@ -80,5 +137,7 @@ func main() {
 		addr = a
 	}
 	fmt.Printf("mock router listening on %s\n", addr)
-	_ = http.ListenAndServe(addr, nil)
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		log.Fatal(err)
+	}
 }

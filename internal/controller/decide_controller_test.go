@@ -43,6 +43,7 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 			ScalingPolicy: *policy(),
 		},
 	}
+	ew.Status.DesiredReplicas = aiinfrav1alpha1.WorkloadReplicas{Training: 4, Inference: 2}
 	if lastScale != nil {
 		ew.Status.ScalingHistory = []aiinfrav1alpha1.ScalingEvent{
 			{Time: *lastScale, Action: "inference+1/training-1", Reason: "overload"},
@@ -52,12 +53,24 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 	depT := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-training", Namespace: "default",
 			Labels: workloadLabels("demo", WorkloadTraining)},
-		Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(4)},
+		Spec:   appsv1.DeploymentSpec{Replicas: int32Ptr(4)},
+		Status: appsv1.DeploymentStatus{Replicas: 4, UpdatedReplicas: 4, ReadyReplicas: 4, AvailableReplicas: 4},
 	}
 	depI := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-inference", Namespace: "default",
 			Labels: workloadLabels("demo", WorkloadInference)},
-		Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(2)},
+		Spec:   appsv1.DeploymentSpec{Replicas: int32Ptr(2)},
+		Status: appsv1.DeploymentStatus{Replicas: 2, UpdatedReplicas: 2, ReadyReplicas: 2, AvailableReplicas: 2},
+	}
+	for _, entry := range []struct {
+		dep  *appsv1.Deployment
+		role string
+	}{{depT, WorkloadTraining}, {depI, WorkloadInference}} {
+		desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, entry.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry.dep.Spec.Template = desired.Spec.Template
 	}
 	// 全链路 Reconcile 的 ensure 需要确认"子资源归 CR 所有" → 预置 ownerReference
 	owner := true

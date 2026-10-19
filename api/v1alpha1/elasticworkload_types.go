@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -25,6 +26,7 @@ import (
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
 // ElasticWorkloadSpec defines the desired state of ElasticWorkload
+// +kubebuilder:validation:XValidation:rule="self.training.gpuPerWorker == self.inference.gpuPerInstance",message="only equal GPU units per replica are supported"
 type ElasticWorkloadSpec struct {
 	// Training workload: the long-running batch job (训练侧)
 	// +kubebuilder:validation:XValidation:rule="self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas",message="training: minReplicas <= replicas <= maxReplicas"
@@ -44,35 +46,58 @@ type ElasticWorkloadSpec struct {
 // TrainingSpec defines the training workload (long-running batch job)
 type TrainingSpec struct {
 	// Desired number of training workers
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="initial replicas are immutable; recreate the workload to change its budget"
 	Replicas int32 `json:"replicas"`
 	// Floor: elastic scaling must not go below this (弹性下限,不能把训练清零)
 	MinReplicas int32 `json:"minReplicas"`
 	// Ceiling
 	MaxReplicas int32 `json:"maxReplicas"`
 	// GPUs per worker (项目一 scale law: 吞吐 ∝ g^0.85)
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="GPU units are immutable"
 	GPUPerWorker int32 `json:"gpuPerWorker"`
 	// Container image
 	Image string `json:"image"`
 	// Entrypoint command
-	Command []string `json:"command,omitempty"`
+	Command   []string          `json:"command,omitempty"`
+	Resources WorkloadResources `json:"resources,omitempty"`
 }
 
 // InferenceSpec defines the inference workload (serving, backed by KV data plane)
 type InferenceSpec struct {
 	// Desired number of vLLM instances
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="initial replicas are immutable; recreate the workload to change its budget"
 	Replicas int32 `json:"replicas"`
 	// Floor
 	MinReplicas int32 `json:"minReplicas"`
 	// Ceiling
 	MaxReplicas int32 `json:"maxReplicas"`
 	// GPUs per instance (util=0.35, 4090 校准:多实例近免费)
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="GPU units are immutable"
 	GPUPerInstance int32 `json:"gpuPerInstance"`
 	// Container image (vLLM)
 	Image string `json:"image"`
 	// Enable prefix caching (KV 数据面核心:前缀命中省 prefill)
 	PrefixCaching bool `json:"prefixCaching,omitempty"`
 	// Entrypoint command (vLLM 实例启动命令;L2 mock 用它跑 busybox)
-	Command []string `json:"command,omitempty"`
+	Command       []string          `json:"command,omitempty"`
+	Resources     WorkloadResources `json:"resources,omitempty"`
+	ReadinessHTTP *HTTPHealthCheck  `json:"readinessHTTP,omitempty"`
+}
+
+type HTTPHealthCheck struct {
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+	// +kubebuilder:validation:Pattern="^/"
+	// +kubebuilder:default="/health"
+	Path string `json:"path,omitempty"`
+}
+
+type WorkloadResources struct {
+	Requests corev1.ResourceList `json:"requests,omitempty"`
+	Limits   corev1.ResourceList `json:"limits,omitempty"`
 }
 
 // ScalingPolicy is the config of 项目一 Rule1-5 (参数来源全部为项目一已交付证据)
@@ -136,7 +161,6 @@ type ScalingEvent struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:subresource:scale:specpath=.spec.inference.replicas,statuspath=.status.readyReplicas.inference
 
 // ElasticWorkload is the Schema for the elasticworkloads API
 type ElasticWorkload struct {

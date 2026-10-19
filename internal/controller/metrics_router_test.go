@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestRouterMetrics_OK(t *testing.T) {
@@ -13,7 +14,11 @@ func TestRouterMetrics_OK(t *testing.T) {
 		if r.URL.Path != "/ttft_p95" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		if err := json.NewEncoder(w).Encode(map[string]int32{"ttft_p95_ms": 412}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"ttft_p95_ms":  412,
+			"observed_at":  time.Now().UTC(),
+			"sample_count": 100,
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}))

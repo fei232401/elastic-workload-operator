@@ -20,6 +20,9 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"time"
+
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -80,8 +83,19 @@ func main() {
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
 	var routerURL string
+	var watchNamespace string
+	flag.StringVar(&watchNamespace, "watch-namespace", "", "Namespace to reconcile; empty watches all namespaces")
+	var metricPolicy controller.MetricsPolicy
 	flag.StringVar(&routerURL, "router-url", "http://router:8080",
 		"KV Router(数据面)的 base URL,用于读 ttft_p95(集群内 Service 名)")
+	flag.DurationVar(&metricPolicy.MaxAge, "metric-max-age", 30*time.Second,
+		"Maximum age of the latest included TTFT observation")
+	flag.Int64Var(&metricPolicy.MinSamples, "metric-min-samples", 20,
+		"Minimum request samples in the producer's TTFT window")
+	flag.DurationVar(&metricPolicy.MaxFutureSkew, "metric-clock-tolerance", 5*time.Second,
+		"Allowed future timestamp clock skew")
+	flag.BoolVar(&metricPolicy.AllowLegacy, "allow-legacy-metrics", false,
+		"Allow old value-only metrics without freshness or sample-count guarantees")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -89,6 +103,14 @@ func main() {
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	metricReader, err := controller.NewRouterMetricsWithPolicy(routerURL, metricPolicy)
+	if err != nil {
+		setupLog.Error(err, "Invalid metric validation policy")
+		os.Exit(1)
+	}
+	if metricPolicy.AllowLegacy {
+		setupLog.Info("Legacy metrics enabled; freshness and sample-count checks are unavailable without metadata")
+	}
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
@@ -157,7 +179,12 @@ func main() {
 		metricsServerOptions.KeyName = metricsCertKey
 	}
 
+	cacheOptions := cache.Options{}
+	if watchNamespace != "" {
+		cacheOptions.DefaultNamespaces = map[string]cache.Config{watchNamespace: {}}
+	}
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Cache:                  cacheOptions,
 		Scheme:                 scheme,
 		Metrics:                metricsServerOptions,
 		WebhookServer:          webhookServer,
@@ -184,7 +211,7 @@ func main() {
 	if err := (&controller.ElasticWorkloadReconciler{
 		Client:  mgr.GetClient(),
 		Scheme:  mgr.GetScheme(),
-		Metrics: controller.NewRouterMetrics(routerURL),
+		Metrics: metricReader,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "elasticworkload")
 		os.Exit(1)

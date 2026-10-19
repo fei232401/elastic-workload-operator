@@ -53,7 +53,7 @@ var _ = Describe("ElasticWorkload Controller", func() {
 						Image: "training-img:v1", Command: []string{"/train.sh"}},
 					Inference: aiinfrav1alpha1.InferenceSpec{
 						Replicas: 2, MinReplicas: 1, MaxReplicas: 4, GPUPerInstance: 1,
-						Image: "vllm-img:v1", PrefixCaching: true},
+						Image: "vllm-img:v1", ReadinessHTTP: &aiinfrav1alpha1.HTTPHealthCheck{Port: 8000}},
 					ScalingPolicy: aiinfrav1alpha1.ScalingPolicy{
 						TargetMetric: "ttft_p95", SLO: 300, MinHoldDuration: 24, MaxScaleStep: 1},
 				},
@@ -77,7 +77,7 @@ var _ = Describe("ElasticWorkload Controller", func() {
 			}
 		})
 
-		It("全链路:过载让渡 训练4/推理2 → 3/3,finalizer+phase=Running+审计事件", func() {
+		It("全链路:初始工作负载可用后过载让渡4/2 → 3/3，等待实际收敛", func() {
 			By("reconciling with fake metrics ttft=412(过载)")
 			controllerReconciler := &ElasticWorkloadReconciler{
 				Client:  k8sClient,
@@ -85,6 +85,27 @@ var _ = Describe("ElasticWorkload Controller", func() {
 				Metrics: &fakeMetrics{ttft: 412},
 			}
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("reporting the initial Deployments as available")
+			for _, workload := range []struct {
+				name     string
+				replicas int32
+			}{
+				{"training", 4}, {"inference", 2},
+			} {
+				deployment := &appsv1.Deployment{}
+				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-" + workload.name, Namespace: resourceNamespace}, deployment)).To(Succeed())
+				deployment.Status = appsv1.DeploymentStatus{
+					ObservedGeneration: deployment.Generation,
+					Replicas:           workload.replicas,
+					UpdatedReplicas:    workload.replicas,
+					ReadyReplicas:      workload.replicas,
+					AvailableReplicas:  workload.replicas,
+				}
+				Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+			}
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting 子 Deployment:训练 4→3、推理 2→3")
@@ -95,13 +116,46 @@ var _ = Describe("ElasticWorkload Controller", func() {
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-inference", Namespace: resourceNamespace}, inference)).To(Succeed())
 			Expect(*inference.Spec.Replicas).To(Equal(int32(3)))
 
-			By("asserting finalizer + phase=Running + 审计事件")
+			By("asserting finalizer + phase=Progressing + 审计事件")
 			got := &aiinfrav1alpha1.ElasticWorkload{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, got)).To(Succeed())
 			Expect(got.Finalizers).To(ContainElement(FinalizerName))
-			Expect(got.Status.Phase).To(Equal("Running"))
+			Expect(got.Status.Phase).To(Equal("Progressing"))
+			generation := inference.Generation
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-inference", Namespace: resourceNamespace}, inference)).To(Succeed())
+			Expect(inference.Generation).To(Equal(generation))
 			Expect(got.Status.ScalingHistory).To(HaveLen(1))
 			Expect(got.Status.ScalingHistory[0].Reason).To(Equal("overload"))
+
+			By("updating the managed image and command without replacing the committed allocation")
+			got.Spec.Inference.Image = "vllm-img:v2"
+			got.Spec.Inference.Command = []string{"/serve-v2"}
+			Expect(k8sClient.Update(ctx, got)).To(Succeed())
+			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-inference", Namespace: resourceNamespace}, inference)).To(Succeed())
+			Expect(inference.Spec.Template.Spec.Containers[0].Image).To(Equal("vllm-img:v2"))
+			Expect(inference.Spec.Template.Spec.Containers[0].Command).To(Equal([]string{"/serve-v2"}))
+			Expect(inference.Status.ObservedGeneration).To(BeNumerically("<", inference.Generation))
+			Expect(k8sClient.Get(ctx, typeNamespacedName, got)).To(Succeed())
+			Expect(got.Status.ScalingHistory).To(HaveLen(1))
+			Expect(got.Status.Phase).To(Equal("Progressing"))
+
+			By("rejecting initial-budget mutation at the real API server")
+			mutated := got.DeepCopy()
+			mutated.Spec.Training.Replicas++
+			Expect(k8sClient.Update(ctx, mutated)).NotTo(Succeed())
+			mutated = got.DeepCopy()
+			mutated.Spec.Training.GPUPerWorker++
+			Expect(k8sClient.Update(ctx, mutated)).NotTo(Succeed())
+			mutated = got.DeepCopy()
+			mutated.Name = "unequal-gpu-units"
+			mutated.ResourceVersion = ""
+			mutated.UID = ""
+			mutated.Spec.Inference.GPUPerInstance = 2
+			Expect(k8sClient.Create(ctx, mutated)).NotTo(Succeed())
 		})
 	})
 })

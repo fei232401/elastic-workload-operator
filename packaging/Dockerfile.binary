@@ -1,0 +1,5 @@
+FROM scratch
+ARG PROGRAM=manager
+COPY ${PROGRAM} /app
+USER 65532:65532
+ENTRYPOINT ["/app"]

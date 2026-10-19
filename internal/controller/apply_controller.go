@@ -6,6 +6,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -13,33 +14,29 @@ import (
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
-// commit 把决策"意图"原子写进 status(single source of truth,幕8 声明式目标收敛):
-//   - status.desiredReplicas = 本次决策的目标分配
-//   - status.scalingHistory 追加一条审计(兼作下一次 min_hold 计时起点)
-//   - 发一条 Scaled Event
-//
-// 单对象 Status().Update 天然原子 —— 这就是修复旧"两段式写非原子丢卡(6→5)"的关键:
-// 意图一旦提交,apply 只会朝它收敛;部分失败(写成训练、冲突推理)重试时,
-// 训练已到位是 no-op、推理继续朝同一目标收敛,总数不丢、不叠加漂移。
 func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload, dec ScalingDecision) error {
 	logger := logf.FromContext(ctx)
 	ew.Status.DesiredReplicas = aiinfrav1alpha1.WorkloadReplicas{
 		Training:  dec.DesiredTraining,
 		Inference: dec.DesiredInference,
 	}
-	// 审计轨迹(面试:status 兼作控制器状态与审计,重启安全)
 	ew.Status.ScalingHistory = append(ew.Status.ScalingHistory, aiinfrav1alpha1.ScalingEvent{
 		Time:   metav1.Now(),
 		Action: fmt.Sprintf("inference%+d/training%+d", dec.InferenceDelta, dec.TrainingDelta),
 		Reason: decisionReason(dec),
 		Metric: fmt.Sprintf("ttft_p95=%dms", dec.TTFTMS),
 	})
+	if n := len(ew.Status.ScalingHistory); n > scalingHistoryLimit {
+		ew.Status.ScalingHistory = append([]aiinfrav1alpha1.ScalingEvent(nil), ew.Status.ScalingHistory[n-scalingHistoryLimit:]...)
+	}
+	ew.Status.Phase = "Progressing"
+	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionReady, metav1.ConditionFalse, "AllocationPending", "Committed target is awaiting workload convergence"))
+	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionProgressing, metav1.ConditionTrue, "AllocationPending", "Applying committed replica targets"))
 	if err := r.Status().Update(ctx, ew); err != nil {
 		return err
 	}
 	logger.Info("committed", "desiredTraining", dec.DesiredTraining, "desiredInference", dec.DesiredInference, "reason", decisionReason(dec))
-	// Event(幕6b):describe 可见的操作日志
-	r.event(ew, corev1.EventTypeNormal, "Scaled",
+	r.event(ew, corev1.EventTypeNormal, "DecisionCommitted",
 		fmt.Sprintf("inference=%d/training=%d (%s, ttft_p95=%dms)",
 			dec.DesiredInference, dec.DesiredTraining, decisionReason(dec), dec.TTFTMS))
 	return nil
@@ -64,6 +61,9 @@ func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alph
 		var dep appsv1.Deployment
 		if err := r.Get(ctx, types.NamespacedName{Name: ew.Name + "-" + u.workload, Namespace: ew.Namespace}, &dep); err != nil {
 			return err
+		}
+		if !isOwnedBy(&dep, ew) {
+			return fmt.Errorf("deployment %s/%s is not owned by this ElasticWorkload", dep.Namespace, dep.Name)
 		}
 		cur := int32(0)
 		if dep.Spec.Replicas != nil {

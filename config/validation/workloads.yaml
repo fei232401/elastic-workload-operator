@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ew-validation
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ew-controller
+  namespace: ew-validation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ew-validation-controller
+  namespace: ew-validation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: manager-role
+subjects:
+  - kind: ServiceAccount
+    name: ew-controller
+    namespace: ew-validation
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ew-controller
+  namespace: ew-validation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ew-controller
+  template:
+    metadata:
+      labels:
+        app: ew-controller
+    spec:
+      serviceAccountName: ew-controller
+      containers:
+        - name: manager
+          image: ew-operator:closure-v1
+          imagePullPolicy: Never
+          args:
+            - --watch-namespace=ew-validation
+            - --router-url=http://mockrouter:8080
+            - --metric-max-age=10s
+            - --metric-min-samples=20
+            - --metric-clock-tolerance=5s
+            - --leader-elect=false
+            - --metrics-bind-address=0
+            - --health-probe-bind-address=:8081
+          ports:
+            - name: health
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mockrouter
+  namespace: ew-validation
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mockrouter
+  template:
+    metadata:
+      labels:
+        app: mockrouter
+    spec:
+      containers:
+        - name: mockrouter
+          image: ew-mockrouter:recovery-v1
+          imagePullPolicy: Never
+          env:
+            - name: INITIAL_TTFT_MS
+              value: "210"
+          ports:
+            - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /ttft_p95
+              port: 8080
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mockrouter
+  namespace: ew-validation
+spec:
+  selector:
+    app: mockrouter
+  ports:
+    - port: 8080
+      targetPort: 8080

@@ -67,13 +67,16 @@ func TestReconcile_EmitsScaleEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	select {
-	case ev := <-rec.Events:
-		if !strings.Contains(ev, "Normal Scaled") || !strings.Contains(ev, "overload") {
-			t.Fatalf("unexpected event: %q", ev)
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case ev := <-rec.Events:
+			if strings.Contains(ev, "Normal DecisionCommitted") && strings.Contains(ev, "overload") {
+				return
+			}
+		case <-deadline:
+			t.Fatal("expected a DecisionCommitted event")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("expected a Scaled event")
 	}
 }
 
@@ -122,6 +125,16 @@ func TestReconcile_PartialApplyConvergesToCommittedDesired(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-inference", Namespace: "default",
 			Labels: workloadLabels("demo", WorkloadInference)},
 		Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(2)},
+	}
+	for _, entry := range []struct {
+		dep  *appsv1.Deployment
+		role string
+	}{{depT, WorkloadTraining}, {depI, WorkloadInference}} {
+		desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, entry.role)
+		if err != nil {
+			t.Fatal(err)
+		}
+		entry.dep.Spec.Template = desired.Spec.Template
 	}
 	owner := true
 	ref := metav1.OwnerReference{

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
-	"k8s.io/apimachinery/pkg/types"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
@@ -29,16 +27,14 @@ func (r *ElasticWorkloadReconciler) decideStep(ctx context.Context, ew *aiinfrav
 		return ScalingDecision{}, fmt.Errorf("MetricsReader not configured")
 	}
 
-	// 决策输入 = 当前分配(Deployment spec.replicas),不是就绪数(ready 有 provisioning 延迟,
-	// 跟项目一"分配即时生效"对齐;就绪数由 observe 另写 status)
-	alloc, err := r.allocation(ctx, ew)
-	if err != nil {
-		return ScalingDecision{}, err
-	}
+	alloc := ew.Status.DesiredReplicas
 
 	ttft, err := r.Metrics.TTFTP95MS(ctx)
 	if err != nil {
 		return ScalingDecision{}, err
+	}
+	if ttft < 0 {
+		return ScalingDecision{}, fmt.Errorf("ttft_p95_ms must be non-negative")
 	}
 	logger.Info("observe metric", "ttft_p95_ms", ttft, "allocation", alloc)
 
@@ -58,28 +54,6 @@ func (r *ElasticWorkloadReconciler) decideStep(ctx context.Context, ew *aiinfrav
 	dec.TTFTMS = ttft
 	logger.Info("decision", "action", dec.Action, "inferenceDelta", dec.InferenceDelta, "trainingDelta", dec.TrainingDelta)
 	return dec, nil
-}
-
-// allocation 读两个子 Deployment 当前 spec.replicas(我们控制的分配)
-func (r *ElasticWorkloadReconciler) allocation(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) (aiinfrav1alpha1.WorkloadReplicas, error) {
-	var out aiinfrav1alpha1.WorkloadReplicas
-	for _, wl := range []string{WorkloadTraining, WorkloadInference} {
-		var dep appsv1.Deployment
-		if err := r.Get(ctx, types.NamespacedName{Name: ew.Name + "-" + wl, Namespace: ew.Namespace}, &dep); err != nil {
-			return out, err
-		}
-		n := int32(0)
-		if dep.Spec.Replicas != nil {
-			n = *dep.Spec.Replicas
-		}
-		switch wl {
-		case WorkloadTraining:
-			out.Training = n
-		case WorkloadInference:
-			out.Inference = n
-		}
-	}
-	return out, nil
 }
 
 // lastScaleTime 取最近一次扩缩时间(存 status.scalingHistory 末位)

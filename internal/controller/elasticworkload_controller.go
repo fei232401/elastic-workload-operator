@@ -18,11 +18,14 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,94 +75,77 @@ type ElasticWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 // 每次一个 ElasticWorkload 被创建/修改/删除都会触发一次;失败返回 error → 退避重试。
 func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := logf.FromContext(ctx)
-
-	// ① 获取触发的 ElasticWorkload 实例(幂等:已删除则静默返回)
 	var ew aiinfrav1alpha1.ElasticWorkload
 	if err := r.Get(ctx, req.NamespacedName, &ew); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	logger.Info("reconciling", "phase", ew.Status.Phase)
-
-	// 删除路径(幕6):子资源靠 ownerReference 级联回收;标记 Deleting → 移除 finalizer 放行删除
 	if !ew.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, r.finalize(ctx, &ew)
 	}
-
-	// 首次接入:加 finalizer(此后删除会被拦下先走 finalize),并置 Pending
 	if !controllerutil.ContainsFinalizer(&ew, FinalizerName) {
 		controllerutil.AddFinalizer(&ew, FinalizerName)
 		if err := r.Update(ctx, &ew); err != nil {
 			return ctrl.Result{}, err
 		}
-		logger.Info("added finalizer", "finalizer", FinalizerName)
-		if ew.Status.Phase == "" {
-			ew.Status.Phase = "Pending"
-			// 初始化声明式目标分配 = spec 初值(幕8:apply 只朝 status.desiredReplicas 收敛,
-			// 未初始化会误把 Deployment 收敛到 0)
-			ew.Status.DesiredReplicas = aiinfrav1alpha1.WorkloadReplicas{
-				Training:  ew.Spec.Training.Replicas,
-				Inference: ew.Spec.Inference.Replicas,
-			}
-			if err := r.Status().Update(ctx, &ew); err != nil {
-				return ctrl.Result{}, err
-			}
+	}
+	if err := r.initializeAllocation(ctx, &ew); err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "InitializationFailed", err))
+	}
+	if err := validateAllocation(&ew); err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "InvalidAllocation", err))
+	}
+	for _, workload := range []string{WorkloadTraining, WorkloadInference} {
+		if err := r.ensureDeployment(ctx, &ew, workload); err != nil {
+			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "EnsureFailed", err))
 		}
 	}
-
-	// ② ensure 子资源:训练/推理 Deployment(不存在则创建,带 ownerReference)
-	for _, wl := range []string{WorkloadTraining, WorkloadInference} {
-		if err := r.ensureDeployment(ctx, &ew, wl); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := r.apply(ctx, &ew); err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ApplyFailed", err))
 	}
-
-	// ③ observe:读两个子 Deployment 实际 ready 数,写回 status.readyReplicas(仅变化时更新)
-	if err := r.observe(ctx, &ew); err != nil {
-		return ctrl.Result{}, err
+	ready, err := r.reportWorkloads(ctx, &ew)
+	if err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ObservationFailed", err))
 	}
-	// 报告 phase(幕6):孩子们在管 = Running(仅当变化时写,避免循环)
-	if ew.Status.Phase != "Running" {
-		ew.Status.Phase = "Running"
-		if err := r.Status().Update(ctx, &ew); err != nil {
-			return ctrl.Result{}, err
-		}
+	if !ready {
+		return ctrl.Result{RequeueAfter: tickSeconds}, nil
 	}
-	// ④ decide(幕4):读 ttft_p95 + min_hold 闸门 → Rule1-5
 	dec, err := r.decideStep(ctx, &ew)
 	if err != nil {
+		logf.FromContext(ctx).Error(err, "Metrics unavailable; keeping committed allocation")
+		return ctrl.Result{RequeueAfter: tickSeconds}, r.reportMetrics(ctx, &ew, err)
+	}
+	if err := r.reportMetrics(ctx, &ew, nil); err != nil {
 		return ctrl.Result{}, err
 	}
-	// ⑤ commit(幕8 修复):非 none 才把"目标分配 + 审计"原子写进 status.desiredReplicas
 	if dec.Action != "none" {
 		if err := r.commit(ctx, &ew, dec); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.apply(ctx, &ew); err != nil {
+			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ApplyFailed", err))
+		}
+		if _, err := r.reportWorkloads(ctx, &ew); err != nil {
+			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ObservationFailed", err))
+		}
 	}
-	// ⑥ apply(幕5/幕8):朝 status.desiredReplicas 收敛(幂等,变了才写,部分失败重试不叠加)
-	if err := r.apply(ctx, &ew); err != nil {
-		return ctrl.Result{}, err
-	}
-	// ⑦ finalizer + report(幕6):删除回收 + status/Event
-
-	// 定时醒来(幕6d):项目一 tick=5s 模型——即使无事件也周期性重决策。
-	// 没有它,扩一次后无事件触发就歇了;min_hold 在 decideStep 内闸门,不会 5s 乱动
 	return ctrl.Result{RequeueAfter: tickSeconds}, nil
 }
 
 // desiredDeployment 构造某个工作负载的 Deployment(仅创建时用 spec.replicas 作为初始值)
 func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.ElasticWorkload, workload string) (*appsv1.Deployment, error) {
 	var (
-		name     string
-		image    string
-		command  []string
-		replicas int32
-		gpus     int32
+		name      string
+		image     string
+		command   []string
+		replicas  int32
+		gpus      int32
+		resources aiinfrav1alpha1.WorkloadResources
 	)
 	switch workload {
 	case WorkloadTraining:
@@ -168,17 +154,38 @@ func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.Elasti
 		command = ew.Spec.Training.Command
 		replicas = ew.Spec.Training.Replicas
 		gpus = ew.Spec.Training.GPUPerWorker
+		resources = ew.Spec.Training.Resources
 	case WorkloadInference:
 		name = ew.Name + "-inference"
 		image = ew.Spec.Inference.Image
 		command = ew.Spec.Inference.Command
 		replicas = ew.Spec.Inference.Replicas
 		gpus = ew.Spec.Inference.GPUPerInstance
+		resources = ew.Spec.Inference.Resources
 	default:
 		return nil, fmt.Errorf("unknown workload: %s", workload)
 	}
 
+	if apimeta.IsStatusConditionTrue(ew.Status.Conditions, conditionInitialized) {
+		if workload == WorkloadTraining {
+			replicas = ew.Status.DesiredReplicas.Training
+		} else {
+			replicas = ew.Status.DesiredReplicas.Inference
+		}
+	}
 	labels := workloadLabels(ew.Name, workload)
+	var probe *corev1.Probe
+	if workload == WorkloadInference {
+		var err error
+		probe, err = readinessProbe(ew.Spec.Inference.ReadinessHTTP)
+		if err != nil {
+			return nil, err
+		}
+	}
+	requirements, err := workloadResources(resources, gpus)
+	if err != nil {
+		return nil, err
+	}
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -198,7 +205,8 @@ func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.Elasti
 							Command: command,
 							// gpuPerWorker/GPUPerInstance=0 → 不请求 GPU(无 GPU 集群/数据面 mock 场景);
 							// >0 → 请求 nvidia.com/gpu(真 GPU 集群)。L2 用 0,busybox 才能真的 Ready。
-							Resources: corev1.ResourceRequirements{Limits: gpuLimits(gpus)},
+							Resources:      requirements,
+							ReadinessProbe: probe,
 						},
 					},
 				},
@@ -248,7 +256,23 @@ func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *ai
 		return fmt.Errorf("deployment %s/%s exists but is not owned by this ElasticWorkload; refusing to adopt",
 			ew.Namespace, desired.Name)
 	}
-	return nil
+	wanted := desired.Spec.Template.Spec.Containers[0]
+	for index := range existing.Spec.Template.Spec.Containers {
+		container := &existing.Spec.Template.Spec.Containers[index]
+		if container.Name != workload {
+			continue
+		}
+		if container.Image == wanted.Image && equality.Semantic.DeepEqual(container.Command, wanted.Command) &&
+			equality.Semantic.DeepEqual(container.Resources, wanted.Resources) && equality.Semantic.DeepEqual(container.ReadinessProbe, wanted.ReadinessProbe) {
+			return nil
+		}
+		container.Image = wanted.Image
+		container.Command = wanted.Command
+		container.Resources = wanted.Resources
+		container.ReadinessProbe = wanted.ReadinessProbe
+		return r.Update(ctx, &existing)
+	}
+	return fmt.Errorf("owned deployment %s has no managed container %s", existing.Name, workload)
 }
 
 // finalize 处理删除:标记 Deleting(可见性),然后移除 finalizer 放行删除。
@@ -283,47 +307,6 @@ func isOwnedBy(obj *appsv1.Deployment, ew *aiinfrav1alpha1.ElasticWorkload) bool
 	return false
 }
 
-// observe 读取两个子 Deployment 的 ready replicas,写入 status.readyReplicas。
-// 只在值变化时才写回(status 更新会触发新 reconcile;无脑写 = 无限循环,面试常问)。
-func (r *ElasticWorkloadReconciler) observe(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) error {
-	ready, err := r.readyReplicas(ctx, ew)
-	if err != nil {
-		return err
-	}
-	if ew.Status.ReadyReplicas.Training != ready.Training || ew.Status.ReadyReplicas.Inference != ready.Inference {
-		ew.Status.ReadyReplicas = ready
-		if err := r.Status().Update(ctx, ew); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// readyReplicas 按标签列出属于本 CR 的两个子 Deployment,累加其 ReadyReplicas
-func (r *ElasticWorkloadReconciler) readyReplicas(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) (aiinfrav1alpha1.WorkloadReplicas, error) {
-	var out aiinfrav1alpha1.WorkloadReplicas
-	for _, wl := range []string{WorkloadTraining, WorkloadInference} {
-		var deploys appsv1.DeploymentList
-		if err := r.List(ctx, &deploys,
-			client.InNamespace(ew.Namespace),
-			client.MatchingLabels(workloadLabels(ew.Name, wl)),
-		); err != nil {
-			return out, err
-		}
-		var n int32
-		for i := range deploys.Items {
-			n += deploys.Items[i].Status.ReadyReplicas
-		}
-		switch wl {
-		case WorkloadTraining:
-			out.Training = n
-		case WorkloadInference:
-			out.Inference = n
-		}
-	}
-	return out, nil
-}
-
 // event 是事件记录的 nil 安全包装(单测不配 Recorder 也不 panic)
 func (r *ElasticWorkloadReconciler) event(ew *aiinfrav1alpha1.ElasticWorkload, eventType, reason, msg string) {
 	if r.Recorder != nil {
@@ -336,6 +319,7 @@ func (r *ElasticWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Recorder = mgr.GetEventRecorderFor("elasticworkload")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiinfrav1alpha1.ElasticWorkload{}).
+		Owns(&appsv1.Deployment{}).
 		Named("elasticworkload").
 		Complete(r)
 }

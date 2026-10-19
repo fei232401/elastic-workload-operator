@@ -51,7 +51,11 @@ spec:
                   gpuPerInstance:
                     description: GPUs per instance (util=0.35, 4090 校准:多实例近免费)
                     format: int32
+                    minimum: 0
                     type: integer
+                    x-kubernetes-validations:
+                    - message: GPU units are immutable
+                      rule: self == oldSelf
                   image:
                     description: Container image (vLLM)
                     type: string
@@ -66,10 +70,51 @@ spec:
                   prefixCaching:
                     description: Enable prefix caching (KV 数据面核心:前缀命中省 prefill)
                     type: boolean
+                  readinessHTTP:
+                    properties:
+                      path:
+                        default: /health
+                        pattern: ^/
+                        type: string
+                      port:
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    required:
+                    - port
+                    type: object
                   replicas:
                     description: Desired number of vLLM instances
                     format: int32
                     type: integer
+                    x-kubernetes-validations:
+                    - message: initial replicas are immutable; recreate the workload
+                        to change its budget
+                      rule: self == oldSelf
+                  resources:
+                    properties:
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                    type: object
                 required:
                 - gpuPerInstance
                 - image
@@ -81,20 +126,20 @@ spec:
                 - message: 'inference: minReplicas <= replicas <= maxReplicas'
                   rule: self.minReplicas <= self.replicas && self.replicas <= self.maxReplicas
               scalingPolicy:
-                description: 'ScalingPolicy: 算法层 Rule1-5 的配置(参数全部来自算法层已交付证据,无新参数)'
+                description: 'ScalingPolicy: 项目一 Rule1-5 的配置(参数全部来自项目一已交付证据,无新参数)'
                 properties:
                   maxScaleStep:
-                    description: Max replicas change per decision cycle (渐进 ±1,算法层
+                    description: Max replicas change per decision cycle (渐进 ±1,项目一
                       Rule5)
                     format: int32
                     type: integer
                   minHoldDuration:
                     description: Min hold duration in ticks after a scaling action
-                      (@5s = 120s,算法层 Rule4)
+                      (@5s = 120s,项目一 Rule4)
                     format: int32
                     type: integer
                   slo:
-                    description: TTFT P95 SLO threshold in ms (算法层:300ms)
+                    description: TTFT P95 SLO threshold in ms (项目一:300ms)
                     format: int32
                     type: integer
                   targetMetric:
@@ -124,9 +169,13 @@ spec:
                       type: string
                     type: array
                   gpuPerWorker:
-                    description: 'GPUs per worker (算法层 scale law: 吞吐 ∝ g^0.85)'
+                    description: 'GPUs per worker (项目一 scale law: 吞吐 ∝ g^0.85)'
                     format: int32
+                    minimum: 0
                     type: integer
+                    x-kubernetes-validations:
+                    - message: GPU units are immutable
+                      rule: self == oldSelf
                   image:
                     description: Container image
                     type: string
@@ -142,6 +191,33 @@ spec:
                     description: Desired number of training workers
                     format: int32
                     type: integer
+                    x-kubernetes-validations:
+                    - message: initial replicas are immutable; recreate the workload
+                        to change its budget
+                      rule: self == oldSelf
+                  resources:
+                    properties:
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                    type: object
                 required:
                 - gpuPerWorker
                 - image
@@ -157,6 +233,9 @@ spec:
             - scalingPolicy
             - training
             type: object
+            x-kubernetes-validations:
+            - message: only equal GPU units per replica are supported
+              rule: self.training.gpuPerWorker == self.inference.gpuPerInstance
           status:
             description: status defines the observed state of ElasticWorkload
             properties:
@@ -233,7 +312,7 @@ spec:
                 description: |-
                   DesiredReplicas is the controller's committed target allocation
                   (single source of truth: apply converges child Deployments toward it).
-                  声明式目标收敛:决策先原子提交意图到 status,apply 朝它收敛,
+                  幕8 声明式目标收敛:决策先原子提交意图到 status,apply 朝它收敛,
                   部分失败重试时不叠加漂移(修复旧两段式写的 6→5 丢卡)。
                 properties:
                   inference:
@@ -263,9 +342,9 @@ spec:
                 - training
                 type: object
               scalingHistory:
-                description: Recent scaling decisions (audit trail,对应算法层决策日志回放)
+                description: Recent scaling decisions (audit trail,对应项目一决策日志回放)
                 items:
-                  description: ScalingEvent records one scaling decision (算法层决策日志的
+                  description: ScalingEvent records one scaling decision (项目一决策日志的
                     K8s 版)
                   properties:
                     action:
@@ -294,7 +373,4 @@ spec:
     served: true
     storage: true
     subresources:
-      scale:
-        specReplicasPath: .spec.inference.replicas
-        statusReplicasPath: .status.readyReplicas.inference
       status: {}
