@@ -161,9 +161,9 @@ class Run:
         before = progress[-1]["step"] if progress else None
         killed_at = time.time()
         self.kubectl("delete", "pod", f"{NAME}-training-1", "--grace-period=0", "--force", check=False)
-        resume = self.wait_resume(2, killed_at, "crash recovery", 600)
+        resume = self.wait_resume(2, killed_at, "forced delete recovery", 600)
         saved = [e for e in self.events() if e["event"] == "checkpoint" and e["time"] <= killed_at]
-        self.record("hard_kill_recovery", last_progress_before_kill=before,
+        self.record("forced_delete_sigterm_recovery", note="kubectl delete --force still sends SIGTERM, so this measures graceful restart; scripts/crash_trainer.sh is the SIGKILL crash test", last_progress_before_kill=before,
                     last_checkpoint_before_kill=saved[-1] if saved else None, resume=resume,
                     steps_lost_at_least=(before - resume["step"]) if before is not None else None,
                     recovery_s=round(resume["time"] - killed_at, 2))

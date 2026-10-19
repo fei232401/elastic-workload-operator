@@ -41,7 +41,7 @@ spec:
       serviceAccountName: ew-controller
       containers:
         - name: manager
-          image: ew-operator:closure-v1
+          image: ew-operator:handoff-v1
           imagePullPolicy: Never
           args:
             - --watch-namespace=ew-validation
