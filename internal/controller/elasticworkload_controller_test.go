@@ -86,29 +86,23 @@ var _ = Describe("ElasticWorkload Controller", func() {
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
-			By("reporting the initial Deployments as available")
-			for _, workload := range []struct {
-				name     string
-				replicas int32
-			}{
-				{"training", 4}, {"inference", 2},
-			} {
-				deployment := &appsv1.Deployment{}
-				Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-" + workload.name, Namespace: resourceNamespace}, deployment)).To(Succeed())
-				deployment.Status = appsv1.DeploymentStatus{
-					ObservedGeneration: deployment.Generation,
-					Replicas:           workload.replicas,
-					UpdatedReplicas:    workload.replicas,
-					ReadyReplicas:      workload.replicas,
-					AvailableReplicas:  workload.replicas,
-				}
-				Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
+			By("reporting the initial workloads as available")
+			training := &appsv1.StatefulSet{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-training", Namespace: resourceNamespace}, training)).To(Succeed())
+			training.Status = appsv1.StatefulSetStatus{
+				ObservedGeneration: training.Generation, Replicas: 4, UpdatedReplicas: 4, ReadyReplicas: 4, AvailableReplicas: 4,
 			}
+			Expect(k8sClient.Status().Update(ctx, training)).To(Succeed())
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-inference", Namespace: resourceNamespace}, deployment)).To(Succeed())
+			deployment.Status = appsv1.DeploymentStatus{
+				ObservedGeneration: deployment.Generation, Replicas: 2, UpdatedReplicas: 2, ReadyReplicas: 2, AvailableReplicas: 2,
+			}
+			Expect(k8sClient.Status().Update(ctx, deployment)).To(Succeed())
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: typeNamespacedName})
 			Expect(err).NotTo(HaveOccurred())
 
 			By("asserting 子 Deployment:训练 4→3、推理 2→3")
-			training := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-training", Namespace: resourceNamespace}, training)).To(Succeed())
 			Expect(*training.Spec.Replicas).To(Equal(int32(3)))
 			inference := &appsv1.Deployment{}

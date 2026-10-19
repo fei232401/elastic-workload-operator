@@ -56,6 +56,36 @@ type TrainingSpec struct {
 	Image        string            `json:"image"`
 	Command      []string          `json:"command,omitempty"`
 	Resources    WorkloadResources `json:"resources,omitempty"`
+	// Checkpoint enables the checkpoint handshake before training membership changes.
+	// +optional
+	Checkpoint *CheckpointSpec `json:"checkpoint,omitempty"`
+}
+
+// CheckpointSpec describes how the controller asks training workers to persist progress.
+type CheckpointSpec struct {
+	// Port serves POST /checkpoint?id=N and GET /checkpoint on every training pod.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=8080
+	// +optional
+	Port int32 `json:"port,omitempty"`
+	// RendezvousPort is the torchrun c10d rendezvous port hosted by ordinal 0.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=29400
+	// +optional
+	RendezvousPort int32 `json:"rendezvousPort,omitempty"`
+	// TimeoutSeconds bounds the wait for a requested checkpoint before the handoff proceeds without it.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3600
+	// +kubebuilder:default=60
+	// +optional
+	TimeoutSeconds int32 `json:"timeoutSeconds,omitempty"`
+	// ClaimName is an existing PersistentVolumeClaim mounted at /ckpt in every training pod.
+	// All ranks must share it so that any pod can report the latest checkpoint.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	ClaimName string `json:"claimName"`
 }
 
 // InferenceSpec defines the inference workload.
@@ -137,6 +167,31 @@ type ElasticWorkloadStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// ScalingHistory keeps the most recent committed decisions.
 	ScalingHistory []ScalingEvent `json:"scalingHistory,omitempty"`
+	// LastCheckpointID is the highest checkpoint request identifier issued so far.
+	// +optional
+	LastCheckpointID int64 `json:"lastCheckpointID,omitempty"`
+	// Handoff tracks an in-progress checkpointed replica transfer.
+	// +optional
+	Handoff *Handoff `json:"handoff,omitempty"`
+}
+
+// Handoff moves replicas in three phases: CheckpointRequested, Releasing and Acquiring.
+type Handoff struct {
+	// +kubebuilder:validation:Enum=CheckpointRequested;Releasing;Acquiring
+	Phase string           `json:"phase"`
+	From  WorkloadReplicas `json:"from"`
+	To    WorkloadReplicas `json:"to"`
+	// CheckpointID is the monotonically increasing request identifier sent to the trainers.
+	CheckpointID int64       `json:"checkpointID"`
+	RequestedAt  metav1.Time `json:"requestedAt"`
+	// +optional
+	CheckpointedAt *metav1.Time `json:"checkpointedAt,omitempty"`
+	// +optional
+	CheckpointStep int64 `json:"checkpointStep,omitempty"`
+	// +optional
+	CheckpointTimedOut bool `json:"checkpointTimedOut,omitempty"`
+	// +optional
+	ReleasedAt *metav1.Time `json:"releasedAt,omitempty"`
 }
 
 // WorkloadReplicas holds a replica count for each workload.

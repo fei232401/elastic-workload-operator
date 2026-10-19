@@ -209,9 +209,10 @@ func main() {
 	}
 
 	if err := (&controller.ElasticWorkloadReconciler{
-		Client:  mgr.GetClient(),
-		Scheme:  mgr.GetScheme(),
-		Metrics: metricReader,
+		Client:      mgr.GetClient(),
+		Scheme:      mgr.GetScheme(),
+		Metrics:     metricReader,
+		Checkpoints: controller.NewHTTPCheckpointClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "elasticworkload")
 		os.Exit(1)

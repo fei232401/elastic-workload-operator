@@ -6,8 +6,10 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
@@ -36,6 +38,9 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 	if err := appsv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
 
 	ew := &aiinfrav1alpha1.ElasticWorkload{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default", UID: "uid-1"},
@@ -54,29 +59,18 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 		}
 	}
 
-	depT := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-training", Namespace: "default",
-			Labels: workloadLabels("demo", WorkloadTraining)},
-		Spec:   appsv1.DeploymentSpec{Replicas: int32Ptr(4)},
-		Status: appsv1.DeploymentStatus{Replicas: 4, UpdatedReplicas: 4, ReadyReplicas: 4, AvailableReplicas: 4},
-	}
 	depI := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-inference", Namespace: "default",
 			Labels: workloadLabels("demo", WorkloadInference)},
 		Spec:   appsv1.DeploymentSpec{Replicas: int32Ptr(2)},
 		Status: appsv1.DeploymentStatus{Replicas: 2, UpdatedReplicas: 2, ReadyReplicas: 2, AvailableReplicas: 2},
 	}
-	for _, entry := range []struct {
-		dep  *appsv1.Deployment
-		role string
-	}{{depT, WorkloadTraining}, {depI, WorkloadInference}} {
-		desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, entry.role)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entry.dep.Spec.Template = desired.Spec.Template
+	desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, WorkloadInference)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// 全链路 Reconcile 的 ensure 需要确认"子资源归 CR 所有" → 预置 ownerReference
+	depI.Spec.Template = desired.Spec.Template
+	depT := trainingSet(t, s, ew, 4, true)
 	owner := true
 	ref := metav1.OwnerReference{
 		APIVersion: "aiinfra.example.com/v1alpha1",
@@ -85,7 +79,6 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 		UID:        ew.UID,
 		Controller: &owner,
 	}
-	depT.OwnerReferences = []metav1.OwnerReference{ref}
 	depI.OwnerReferences = []metav1.OwnerReference{ref}
 
 	// WithStatusSubresource:fake client 只对注册过 status 子资源的 GVK 放行 Status().Update,
@@ -94,7 +87,7 @@ func newTestEnv(t *testing.T, ttft int32, lastScale *metav1.Time) (*ElasticWorkl
 		Client: fake.NewClientBuilder().
 			WithScheme(s).
 			WithObjects(ew, depT, depI).
-			WithStatusSubresource(&aiinfrav1alpha1.ElasticWorkload{}).
+			WithStatusSubresource(&aiinfrav1alpha1.ElasticWorkload{}, &appsv1.StatefulSet{}, &appsv1.Deployment{}, &corev1.Pod{}).
 			Build(),
 		Scheme:  s,
 		Metrics: &fakeMetrics{ttft: ttft},
@@ -163,4 +156,30 @@ func TestDecideStep_UsesWorkloadMetricSource(t *testing.T) {
 	if got.RouterURL != "http://router-b:8080" || got.Model != "qwen-3b" {
 		t.Fatalf("metric source not taken from the workload: %+v", got)
 	}
+}
+
+func trainingSet(t *testing.T, s *runtime.Scheme, ew *aiinfrav1alpha1.ElasticWorkload, replicas int32, available bool) *appsv1.StatefulSet {
+	t.Helper()
+	set, _, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredTraining(ew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	set.Spec.Replicas = int32Ptr(replicas)
+	if available {
+		set.Status = appsv1.StatefulSetStatus{Replicas: replicas, UpdatedReplicas: replicas, ReadyReplicas: replicas, AvailableReplicas: replicas}
+	}
+	return set
+}
+
+func replicasOf(t *testing.T, r *ElasticWorkloadReconciler, workload string) int32 {
+	t.Helper()
+	ew := &aiinfrav1alpha1.ElasticWorkload{ObjectMeta: metav1.ObjectMeta{Name: "demo", Namespace: "default"}}
+	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo", Namespace: "default"}, ew); err != nil {
+		t.Fatal(err)
+	}
+	child, err := r.getChild(context.Background(), ew, workload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return *childReplicas(child)
 }

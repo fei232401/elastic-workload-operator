@@ -60,23 +60,20 @@ func TestRecovery_CompletesOldTargetBeforeReadingUnavailableMetrics(t *testing.T
 	if err := r.Status().Update(context.Background(), ew); err != nil {
 		t.Fatal(err)
 	}
-	dep := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-training", Namespace: "default"}, dep); err != nil {
+	training, err := r.getChild(context.Background(), ew, WorkloadTraining)
+	if err != nil {
 		t.Fatal(err)
 	}
-	dep.Spec.Replicas = int32Ptr(3)
-	if err := r.Update(context.Background(), dep); err != nil {
+	setChildReplicas(training, 3)
+	if err := r.Update(context.Background(), training); err != nil {
 		t.Fatal(err)
 	}
 	metrics := &countingMetrics{err: errors.New("metrics offline")}
 	r.Metrics = metrics
 	reconcileTestWorkload(t, r)
-	for _, name := range []string{"demo-training", "demo-inference"} {
-		if err := r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, dep); err != nil {
-			t.Fatal(err)
-		}
-		if *dep.Spec.Replicas != 3 {
-			t.Fatalf("%s did not converge to committed target: %d", name, *dep.Spec.Replicas)
+	for _, workload := range []string{WorkloadTraining, WorkloadInference} {
+		if got := replicasOf(t, r, workload); got != 3 {
+			t.Fatalf("%s did not converge to committed target: %d", workload, got)
 		}
 	}
 	got := fetchTestWorkload(t, r)
@@ -180,13 +177,9 @@ func TestRecovery_ActualPartialUpdateConflictIsRetried(t *testing.T) {
 		t.Fatal("expected an injected update conflict")
 	}
 	reconcileTestWorkload(t, r)
-	for _, name := range []string{"demo-training", "demo-inference"} {
-		dep := &appsv1.Deployment{}
-		if err := r.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "default"}, dep); err != nil {
-			t.Fatal(err)
-		}
-		if *dep.Spec.Replicas != 3 {
-			t.Fatalf("retry did not converge %s: %d", name, *dep.Spec.Replicas)
+	for _, workload := range []string{WorkloadTraining, WorkloadInference} {
+		if got := replicasOf(t, r, workload); got != 3 {
+			t.Fatalf("retry did not converge %s: %d", workload, got)
 		}
 	}
 	if metrics.calls != 1 || len(fetchTestWorkload(t, r).Status.ScalingHistory) != 1 {

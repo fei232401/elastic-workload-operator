@@ -7,6 +7,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -27,19 +28,11 @@ func TestReconcile_OverloadScalesBothAndRecordsEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	depT := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-training", Namespace: "default"}, depT); err != nil {
-		t.Fatal(err)
+	if got := replicasOf(t, r, WorkloadTraining); got != 3 {
+		t.Fatalf("training want 3, got %d", got)
 	}
-	if *depT.Spec.Replicas != 3 {
-		t.Fatalf("training want 3, got %d", *depT.Spec.Replicas)
-	}
-	depI := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-inference", Namespace: "default"}, depI); err != nil {
-		t.Fatal(err)
-	}
-	if *depI.Spec.Replicas != 3 {
-		t.Fatalf("inference want 3, got %d", *depI.Spec.Replicas)
+	if got := replicasOf(t, r, WorkloadInference); got != 3 {
+		t.Fatalf("inference want 3, got %d", got)
 	}
 
 	got := &aiinfrav1alpha1.ElasticWorkload{}
@@ -91,6 +84,9 @@ func TestReconcile_PartialApplyConvergesToCommittedDesired(t *testing.T) {
 	if err := appsv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
 
 	recent := metav1.NewTime(time.Now().Add(-10 * time.Second)) // < 120s hold → min_hold 拦截重新决策
 	ew := &aiinfrav1alpha1.ElasticWorkload{
@@ -114,32 +110,22 @@ func TestReconcile_PartialApplyConvergesToCommittedDesired(t *testing.T) {
 	}
 
 	// 模拟 apply 部分失败后的集群状态:训练已收敛 3、推理仍是 2
-	depT := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "demo-training", Namespace: "default",
-			Labels: workloadLabels("demo", WorkloadTraining)},
-		Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(3)},
-	}
 	depI := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo-inference", Namespace: "default",
 			Labels: workloadLabels("demo", WorkloadInference)},
 		Spec: appsv1.DeploymentSpec{Replicas: int32Ptr(2)},
 	}
-	for _, entry := range []struct {
-		dep  *appsv1.Deployment
-		role string
-	}{{depT, WorkloadTraining}, {depI, WorkloadInference}} {
-		desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, entry.role)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entry.dep.Spec.Template = desired.Spec.Template
+	desired, err := (&ElasticWorkloadReconciler{Scheme: s}).desiredDeployment(ew, WorkloadInference)
+	if err != nil {
+		t.Fatal(err)
 	}
+	depI.Spec.Template = desired.Spec.Template
+	depT := trainingSet(t, s, ew, 3, false)
 	owner := true
 	ref := metav1.OwnerReference{
 		APIVersion: "aiinfra.example.com/v1alpha1", Kind: "ElasticWorkload",
 		Name: ew.Name, UID: ew.UID, Controller: &owner,
 	}
-	depT.OwnerReferences = []metav1.OwnerReference{ref}
 	depI.OwnerReferences = []metav1.OwnerReference{ref}
 
 	r := &ElasticWorkloadReconciler{
@@ -159,19 +145,11 @@ func TestReconcile_PartialApplyConvergesToCommittedDesired(t *testing.T) {
 	}
 
 	// 关键断言:训练仍=3(不叠加再减),推理补到 3 → 总数回到 6,不丢卡
-	gotT := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-training", Namespace: "default"}, gotT); err != nil {
-		t.Fatal(err)
+	if got := replicasOf(t, r, WorkloadTraining); got != 3 {
+		t.Fatalf("训练不应再被减(旧版 delta 叠加会成 2), want 3 got %d", got)
 	}
-	if *gotT.Spec.Replicas != 3 {
-		t.Fatalf("训练不应再被减(旧版 delta 叠加会成 2), want 3 got %d", *gotT.Spec.Replicas)
-	}
-	gotI := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-inference", Namespace: "default"}, gotI); err != nil {
-		t.Fatal(err)
-	}
-	if *gotI.Spec.Replicas != 3 {
-		t.Fatalf("推理应收敛到已提交目标 3, got %d", *gotI.Spec.Replicas)
+	if got := replicasOf(t, r, WorkloadInference); got != 3 {
+		t.Fatalf("推理应收敛到已提交目标 3, got %d", got)
 	}
 
 	// 收敛不重复记账(min_hold 拦截下不应再 commit)
@@ -196,19 +174,11 @@ func TestReconcile_DeadZoneNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	depT := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-training", Namespace: "default"}, depT); err != nil {
-		t.Fatal(err)
+	if got := replicasOf(t, r, WorkloadTraining); got != 4 {
+		t.Fatalf("training 不应变, got %d", got)
 	}
-	if *depT.Spec.Replicas != 4 {
-		t.Fatalf("training 不应变, got %d", *depT.Spec.Replicas)
-	}
-	depI := &appsv1.Deployment{}
-	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo-inference", Namespace: "default"}, depI); err != nil {
-		t.Fatal(err)
-	}
-	if *depI.Spec.Replicas != 2 {
-		t.Fatalf("inference 不应变, got %d", *depI.Spec.Replicas)
+	if got := replicasOf(t, r, WorkloadInference); got != 2 {
+		t.Fatalf("inference 不应变, got %d", got)
 	}
 
 	got := &aiinfrav1alpha1.ElasticWorkload{}

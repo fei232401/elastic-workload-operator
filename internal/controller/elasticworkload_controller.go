@@ -59,8 +59,9 @@ func workloadLabels(crName, workload string) map[string]string {
 // ElasticWorkloadReconciler reconciles a ElasticWorkload object
 type ElasticWorkloadReconciler struct {
 	client.Client
-	Scheme  *runtime.Scheme
-	Metrics MetricsReader
+	Scheme      *runtime.Scheme
+	Metrics     MetricsReader
+	Checkpoints CheckpointClient
 
 	Recorder record.EventRecorder
 }
@@ -68,7 +69,9 @@ type ElasticWorkloadReconciler struct {
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -93,10 +96,14 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := validateAllocation(&ew); err != nil {
 		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "InvalidAllocation", err))
 	}
-	for _, workload := range []string{WorkloadTraining, WorkloadInference} {
-		if err := r.ensureDeployment(ctx, &ew, workload); err != nil {
-			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "EnsureFailed", err))
-		}
+	if err := r.ensureTraining(ctx, &ew); err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "EnsureFailed", err))
+	}
+	if err := r.ensureDeployment(ctx, &ew, WorkloadInference); err != nil {
+		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "EnsureFailed", err))
+	}
+	if ew.Status.Handoff != nil {
+		return r.reconcileHandoff(ctx, &ew)
 	}
 	if err := r.apply(ctx, &ew); err != nil {
 		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ApplyFailed", err))
@@ -120,6 +127,9 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if err := r.commit(ctx, &ew, dec); err != nil {
 			return ctrl.Result{}, err
 		}
+		if ew.Status.Handoff != nil {
+			return r.reconcileHandoff(ctx, &ew)
+		}
 		if err := r.apply(ctx, &ew); err != nil {
 			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ApplyFailed", err))
 		}
@@ -130,76 +140,62 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{RequeueAfter: tickSeconds}, nil
 }
 
-func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.ElasticWorkload, workload string) (*appsv1.Deployment, error) {
+func initialReplicas(ew *aiinfrav1alpha1.ElasticWorkload, workload string) int32 {
+	initialized := apimeta.IsStatusConditionTrue(ew.Status.Conditions, conditionInitialized)
+	effective := effectiveTargets(ew)
+	switch {
+	case workload == WorkloadTraining && initialized:
+		return effective.Training
+	case workload == WorkloadTraining:
+		return ew.Spec.Training.Replicas
+	case initialized:
+		return effective.Inference
+	default:
+		return ew.Spec.Inference.Replicas
+	}
+}
+
+func managedContainer(ew *aiinfrav1alpha1.ElasticWorkload, workload string) (corev1.Container, error) {
+	container := corev1.Container{Name: workload}
 	var (
-		name      string
-		image     string
-		command   []string
-		replicas  int32
 		gpus      int32
 		resources aiinfrav1alpha1.WorkloadResources
+		err       error
 	)
 	switch workload {
 	case WorkloadTraining:
-		name = ew.Name + "-training"
-		image = ew.Spec.Training.Image
-		command = ew.Spec.Training.Command
-		replicas = ew.Spec.Training.Replicas
-		gpus = ew.Spec.Training.GPUPerWorker
-		resources = ew.Spec.Training.Resources
+		container.Image, container.Command = ew.Spec.Training.Image, ew.Spec.Training.Command
+		gpus, resources = ew.Spec.Training.GPUPerWorker, ew.Spec.Training.Resources
+		container.ReadinessProbe = trainingProbe(ew)
+		container.Env = trainingEnv(ew)
 	case WorkloadInference:
-		name = ew.Name + "-inference"
-		image = ew.Spec.Inference.Image
-		command = ew.Spec.Inference.Command
-		replicas = ew.Spec.Inference.Replicas
-		gpus = ew.Spec.Inference.GPUPerInstance
-		resources = ew.Spec.Inference.Resources
+		container.Image, container.Command = ew.Spec.Inference.Image, ew.Spec.Inference.Command
+		gpus, resources = ew.Spec.Inference.GPUPerInstance, ew.Spec.Inference.Resources
+		if container.ReadinessProbe, err = readinessProbe(ew.Spec.Inference.ReadinessHTTP); err != nil {
+			return container, err
+		}
 	default:
-		return nil, fmt.Errorf("unknown workload: %s", workload)
+		return container, fmt.Errorf("unknown workload: %s", workload)
 	}
+	container.Resources, err = workloadResources(resources, gpus)
+	return container, err
+}
 
-	if apimeta.IsStatusConditionTrue(ew.Status.Conditions, conditionInitialized) {
-		if workload == WorkloadTraining {
-			replicas = ew.Status.DesiredReplicas.Training
-		} else {
-			replicas = ew.Status.DesiredReplicas.Inference
-		}
-	}
-	labels := workloadLabels(ew.Name, workload)
-	var probe *corev1.Probe
-	if workload == WorkloadInference {
-		var err error
-		probe, err = readinessProbe(ew.Spec.Inference.ReadinessHTTP)
-		if err != nil {
-			return nil, err
-		}
-	}
-	requirements, err := workloadResources(resources, gpus)
+func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.ElasticWorkload, workload string) (*appsv1.Deployment, error) {
+	container, err := managedContainer(ew, workload)
 	if err != nil {
 		return nil, err
 	}
+	replicas := initialReplicas(ew, workload)
+	labels := workloadLabels(ew.Name, workload)
 	deploy := &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: ew.Namespace,
-			Labels:    labels,
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: childName(ew, workload), Namespace: ew.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{
-						{
-							Name:           workload,
-							Image:          image,
-							Command:        command,
-							Resources:      requirements,
-							ReadinessProbe: probe,
-						},
-					},
-				},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{container}},
 			},
 		},
 	}
@@ -238,7 +234,7 @@ func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *ai
 		return err
 	}
 
-	if !isOwnedBy(&existing, ew) {
+	if !ownedBy(&existing, ew) {
 		return fmt.Errorf("deployment %s/%s exists but is not owned by this ElasticWorkload; refusing to adopt",
 			ew.Namespace, desired.Name)
 	}
@@ -279,15 +275,6 @@ func (r *ElasticWorkloadReconciler) finalize(ctx context.Context, ew *aiinfrav1a
 	return nil
 }
 
-func isOwnedBy(obj *appsv1.Deployment, ew *aiinfrav1alpha1.ElasticWorkload) bool {
-	for _, ref := range obj.OwnerReferences {
-		if ref.Controller != nil && *ref.Controller && ref.UID == ew.UID {
-			return true
-		}
-	}
-	return false
-}
-
 func (r *ElasticWorkloadReconciler) event(ew *aiinfrav1alpha1.ElasticWorkload, eventType, reason, msg string) {
 	if r.Recorder != nil {
 		r.Recorder.Event(ew, eventType, reason, msg)
@@ -300,6 +287,8 @@ func (r *ElasticWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiinfrav1alpha1.ElasticWorkload{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Service{}).
 		Named("elasticworkload").
 		Complete(r)
 }

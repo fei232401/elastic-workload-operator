@@ -59,7 +59,8 @@ class Validation:
                 "get", "pods", "-l", f"app={name}", "-o", "json"))["items"])
 
     def deployment_available(self, name, replicas):
-        dep = self.get("deployment", name)
+        kind = "statefulset" if name.endswith("-training") else "deployment"
+        dep = self.get(kind, name)
         if not dep:
             return False
         status = dep.get("status", {})
@@ -148,7 +149,7 @@ class Validation:
         self.command("delete", "elasticworkloads", name, "--ignore-not-found", "--wait=false")
         self.wait(f"delete {name}", lambda: self.get("elasticworkloads", name) is None)
         for suffix in ("training", "inference"):
-            self.wait(f"garbage collection {name}-{suffix}", lambda suffix=suffix: self.get("deployment", name + "-" + suffix) is None)
+            self.wait(f"garbage collection {name}-{suffix}", lambda suffix=suffix: self.get("statefulset" if suffix == "training" else "deployment", name + "-" + suffix) is None)
 
     def run(self):
         self.scale("ew-controller", 1)
@@ -196,7 +197,7 @@ class Validation:
                                 "action": "inference+1/training-1", "reason": "overload", "metric": "ttft_p95=600ms"}],
         }}
         self.command("patch", "elasticworkloads", "acceptance", "--subresource=status", "--type=merge", "-p", json.dumps(patch))
-        self.command("scale", "deployment", "acceptance-training", "--replicas=3")
+        self.command("scale", "statefulset", "acceptance-training", "--replicas=3")
         if self.get("deployment", "acceptance-inference")["spec"]["replicas"] != 2:
             raise AssertionError("partial failure fixture is not 3/2")
         self.scale("ew-controller", 1)

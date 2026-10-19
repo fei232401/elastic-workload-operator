@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
@@ -16,9 +14,21 @@ import (
 
 func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload, dec ScalingDecision) error {
 	logger := logf.FromContext(ctx)
+	from := ew.Status.DesiredReplicas
 	ew.Status.DesiredReplicas = aiinfrav1alpha1.WorkloadReplicas{
 		Training:  dec.DesiredTraining,
 		Inference: dec.DesiredInference,
+	}
+	if ew.Spec.Training.Checkpoint != nil && from.Training != dec.DesiredTraining {
+		now := metav1.Now()
+		ew.Status.LastCheckpointID = max(now.UnixMilli(), ew.Status.LastCheckpointID+1)
+		ew.Status.Handoff = &aiinfrav1alpha1.Handoff{
+			Phase: handoffCheckpointRequested, From: from, To: ew.Status.DesiredReplicas,
+			CheckpointID: ew.Status.LastCheckpointID, RequestedAt: now,
+		}
+		if from.Training == 0 {
+			ew.Status.Handoff.Phase = handoffReleasing
+		}
 	}
 	ew.Status.ScalingHistory = append(ew.Status.ScalingHistory, aiinfrav1alpha1.ScalingEvent{
 		Time:   metav1.Now(),
@@ -44,35 +54,26 @@ func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alp
 
 func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) error {
 	logger := logf.FromContext(ctx)
-	desired := ew.Status.DesiredReplicas
-
+	targets := effectiveTargets(ew)
 	for _, u := range []struct {
 		workload string
 		target   int32
 	}{
-		{WorkloadTraining, desired.Training},
-		{WorkloadInference, desired.Inference},
+		{WorkloadTraining, targets.Training},
+		{WorkloadInference, targets.Inference},
 	} {
-		var dep appsv1.Deployment
-		if err := r.Get(ctx, types.NamespacedName{Name: ew.Name + "-" + u.workload, Namespace: ew.Namespace}, &dep); err != nil {
+		child, err := r.getChild(ctx, ew, u.workload)
+		if err != nil {
 			return err
 		}
-		if !isOwnedBy(&dep, ew) {
-			return fmt.Errorf("deployment %s/%s is not owned by this ElasticWorkload", dep.Namespace, dep.Name)
-		}
-		cur := int32(0)
-		if dep.Spec.Replicas != nil {
-			cur = *dep.Spec.Replicas
-		}
-		if cur == u.target {
+		if current := childReplicas(child); current != nil && *current == u.target {
 			continue
 		}
-		target := u.target
-		dep.Spec.Replicas = &target
-		if err := r.Update(ctx, &dep); err != nil {
+		setChildReplicas(child, u.target)
+		if err := r.Update(ctx, child); err != nil {
 			return err
 		}
-		logger.Info("applied", "workload", u.workload, "replicas", target)
+		logger.Info("applied", "workload", u.workload, "replicas", u.target)
 	}
 	return nil
 }

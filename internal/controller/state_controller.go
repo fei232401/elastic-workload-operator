@@ -10,7 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
@@ -75,6 +74,9 @@ func validateAllocation(ew *aiinfrav1alpha1.ElasticWorkload) error {
 	if ew.Spec.Inference.PrefixCaching {
 		return fmt.Errorf("prefixCaching is not a managed engine option; configure it explicitly through the inference command")
 	}
+	if checkpoint := ew.Spec.Training.Checkpoint; checkpoint != nil && checkpoint.ClaimName == "" {
+		return fmt.Errorf("training checkpoint requires a shared claimName so every pod reports the same checkpoint status")
+	}
 	if ew.Spec.Training.GPUPerWorker != ew.Spec.Inference.GPUPerInstance {
 		return fmt.Errorf("only equal GPU units per replica are supported; CPU-only mode requires both GPU units to be zero")
 	}
@@ -125,6 +127,7 @@ func deploymentAvailable(dep *appsv1.Deployment, target int32) bool {
 
 func (r *ElasticWorkloadReconciler) inspectWorkloads(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) (aiinfrav1alpha1.WorkloadReplicas, bool, string, error) {
 	var replicas aiinfrav1alpha1.WorkloadReplicas
+	targets := effectiveTargets(ew)
 	ready := true
 	reason := "WorkloadsPending"
 	for _, workload := range []struct {
@@ -132,23 +135,17 @@ func (r *ElasticWorkloadReconciler) inspectWorkloads(ctx context.Context, ew *ai
 		target int32
 		count  *int32
 	}{
-		{WorkloadTraining, ew.Status.DesiredReplicas.Training, &replicas.Training},
-		{WorkloadInference, ew.Status.DesiredReplicas.Inference, &replicas.Inference},
+		{WorkloadTraining, targets.Training, &replicas.Training},
+		{WorkloadInference, targets.Inference, &replicas.Inference},
 	} {
-		var dep appsv1.Deployment
-		if err := r.Get(ctx, types.NamespacedName{Name: ew.Name + "-" + workload.name, Namespace: ew.Namespace}, &dep); err != nil {
+		child, err := r.getChild(ctx, ew, workload.name)
+		if err != nil {
 			return replicas, false, "ObservationFailed", err
 		}
-		if !isOwnedBy(&dep, ew) {
-			return replicas, false, "OwnershipConflict", fmt.Errorf("deployment %s is not owned by this ElasticWorkload", dep.Name)
-		}
-		*workload.count = dep.Status.ReadyReplicas
-		ready = ready && deploymentAvailable(&dep, workload.target)
-		for _, condition := range dep.Status.Conditions {
-			if condition.Type == appsv1.DeploymentProgressing && condition.Status == corev1.ConditionFalse &&
-				condition.Reason == "ProgressDeadlineExceeded" {
-				reason = "DeploymentProgressDeadlineExceeded"
-			}
+		*workload.count = childReady(child)
+		ready = ready && childAvailable(child, workload.target)
+		if childStalled(child) {
+			reason = "DeploymentProgressDeadlineExceeded"
 		}
 	}
 	return replicas, ready, reason, nil
@@ -164,7 +161,11 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 	status, progressing := metav1.ConditionFalse, metav1.ConditionTrue
 	message := "Waiting for Deployments to observe their generation and reach committed replica targets"
 	ew.Status.Phase = "Progressing"
-	if ready {
+	if ready && ew.Status.Handoff != nil {
+		reason = "Handoff" + ew.Status.Handoff.Phase
+		message = "Checkpointed replica handoff is in progress"
+		ready = false
+	} else if ready {
 		status, progressing = metav1.ConditionTrue, metav1.ConditionFalse
 		reason, message = "ReplicaTargetsAvailable", "Both Deployments have reached committed replica targets"
 		ew.Status.Phase = "Running"
