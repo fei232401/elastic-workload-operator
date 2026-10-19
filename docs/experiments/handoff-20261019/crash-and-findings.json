@@ -1,0 +1,22 @@
+{
+ "method": "SIGKILL to the training worker process inside handoff-training-1 via kubectl exec; no chance to checkpoint",
+ "kill_time": 1792412622.369793,
+ "estimated_step_at_kill": 19090,
+ "seconds_per_step": 0.513,
+ "last_checkpoint_before_kill": {
+  "step": 19000,
+  "reason": "periodic"
+ },
+ "resume": {
+  "step": 19000,
+  "world_size": 2
+ },
+ "steps_lost": 90,
+ "work_lost_s": 46.3,
+ "recovery_s": 5.8,
+ "notes": [
+  "kubectl delete --force --grace-period=0 still delivered SIGTERM, so the earlier hard_kill_recovery step in handoff-validation.json saved at step 153 and is not a crash test",
+  "scale-up 1->2 hit a torchrun c10d rendezvous race: both agents waited 60s for keys the other should write (DistStoreError), containers exited and were restarted; pause about 72s",
+  "loss fell from about 0.12 to about 0.003 over about 19000 steps across all membership changes"
+ ]
+}
