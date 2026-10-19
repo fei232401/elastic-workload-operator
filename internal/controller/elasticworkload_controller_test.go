@@ -32,7 +32,6 @@ import (
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
-// envtest 集成测试(L1.5):真 apiserver + 假数据面(fakeMetrics)。
 // 全链路 Reconcile:ensure 子 Deployment → observe → decide → apply → finalizer/phase。
 var _ = Describe("ElasticWorkload Controller", func() {
 	Context("When reconciling a resource", func() {

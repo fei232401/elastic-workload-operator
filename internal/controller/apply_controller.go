@@ -42,11 +42,6 @@ func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alp
 	return nil
 }
 
-// apply 收敛两个子 Deployment 的 spec.replicas 到 status.desiredReplicas(已提交的意图)。
-//   - 幂等:cur == target 不写(少一次 API 写,不覆盖外部改动)
-//   - 乐观并发:Update 带 resourceVersion,冲突返回 error → controller-runtime 退避重试
-//   - 收敛语义:朝"目标值"而非"delta"收敛 —— 部分失败重试时训练已到位是 no-op,
-//     推理继续朝同一目标补上,总数不丢(旧版 delta 叠加会把 6 拖成 5,本版根治)
 func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) error {
 	logger := logf.FromContext(ctx)
 	desired := ew.Status.DesiredReplicas
@@ -70,7 +65,7 @@ func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alph
 			cur = *dep.Spec.Replicas
 		}
 		if cur == u.target {
-			continue // 已收敛,不写
+			continue
 		}
 		target := u.target
 		dep.Spec.Replicas = &target
@@ -82,7 +77,6 @@ func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alph
 	return nil
 }
 
-// decisionReason 把动作翻译成语义(项目一术语:过载/健康归还)
 func decisionReason(dec ScalingDecision) string {
 	switch dec.Action {
 	case "scale_inference_up":

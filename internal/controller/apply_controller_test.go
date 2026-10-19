@@ -55,7 +55,6 @@ func TestReconcile_OverloadScalesBothAndRecordsEvent(t *testing.T) {
 	}
 }
 
-// 扩缩落盘 → 发一条 K8s Event(幕6b report 层:describe 可见的操作日志)
 func TestReconcile_EmitsScaleEvent(t *testing.T) {
 	r, _ := newTestEnv(t, 412, nil)
 	rec := record.NewFakeRecorder(10)
@@ -80,7 +79,6 @@ func TestReconcile_EmitsScaleEvent(t *testing.T) {
 	}
 }
 
-// 回归测试(幕8 声明式目标收敛的核心修复):
 // 决策已提交(status.desiredReplicas=3/3,min_hold 计时生效),但 apply 部分失败
 // (训练已收敛到 3、推理仍 2,模拟上次推理写冲突没成功)。下一次 Reconcile 必须
 // 朝"已提交目标"收敛而非"重新叠加 delta":训练已是 3 → no-op(不再减成 2),

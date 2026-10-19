@@ -7,7 +7,6 @@ import (
 )
 
 // TestGPULimits:gpuPerWorker/GPUPerInstance=0 → 不请求 GPU(无 GPU 集群/数据面 mock 场景);
-// >0 → 请求 nvidia.com/gpu。L2 靠 0 让 busybox 真正 Ready。
 func TestGPULimits_Zero_NoGPU(t *testing.T) {
 	if got := gpuLimits(0); got != nil {
 		t.Fatalf("want nil limits for gpus=0, got %v", got)

@@ -87,7 +87,7 @@ func main() {
 	flag.StringVar(&watchNamespace, "watch-namespace", "", "Namespace to reconcile; empty watches all namespaces")
 	var metricPolicy controller.MetricsPolicy
 	flag.StringVar(&routerURL, "router-url", "http://router:8080",
-		"KV Router(数据面)的 base URL,用于读 ttft_p95(集群内 Service 名)")
+		"Default router base URL for TTFT P95 when a workload does not set spec.scalingPolicy.metrics.routerURL")
 	flag.DurationVar(&metricPolicy.MaxAge, "metric-max-age", 30*time.Second,
 		"Maximum age of the latest included TTFT observation")
 	flag.Int64Var(&metricPolicy.MinSamples, "metric-min-samples", 20,

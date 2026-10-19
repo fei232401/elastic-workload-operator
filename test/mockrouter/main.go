@@ -1,12 +1,3 @@
-// mockrouter 是 L2 演示用的"假数据面":站在 KV Router 的位置,按脚本吐 ttft_p95。
-// 它不是真 KV Router(真数据面=KV 项目的 Python 服务,实测真实 vLLM 的 TTFT);
-// 它只模仿 MetricsReader 读的那个指标端点,驱动算子的决策循环。
-//
-// 端点:
-//
-//	GET /ttft_p95[?model=] → {"ttft_p95_ms": <值>, "model": <请求的模型>}
-//	GET /control?ttft=600  → 手动覆盖 ttft(演示"我调高负载,算子开始让卡")
-//	GET /control?auto=1    → 回到脚本曲线
 package main
 
 import (
@@ -29,11 +20,6 @@ var (
 	frozenAt    *time.Time
 )
 
-// scriptedTTFT 脚本曲线(三阶段演示全闭环):
-//   - <20s  : 150ms → 死区 [180,300],不动
-//   - <100s : 600ms → 过载 >300,让渡(持续 80s,配合 minHold=2tick 能看多步)
-//   - <140s : 120ms → 健康 <180,归还
-//   - 之后  : 150ms → 回稳
 func scriptedTTFT() int32 {
 	elapsed := int(time.Since(start).Seconds())
 	switch {

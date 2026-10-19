@@ -40,20 +40,15 @@ import (
 )
 
 const (
-	// 工作负载类型标签值
 	WorkloadTraining  = "training"
 	WorkloadInference = "inference"
 
-	// 标签键:controller 用它们找到"属于这个 CR"的子资源与 Pod(幕3 拍板:标签选择器)
 	LabelNameKey     = "elasticworkload.aiinfra.example.com/name"
 	LabelWorkloadKey = "elasticworkload.aiinfra.example.com/workload"
 
-	// finalizer:删除前保护(幕6)。子资源靠 ownerReference 级联回收;finalizer 提供
-	// phase=Deleting 可见性 + 未来优雅收尾的 hook 点
 	FinalizerName = "aiinfra.example.com/finalizer"
 )
 
-// workloadLabels 返回某个 CR 下某类工作负载的统一标签
 func workloadLabels(crName, workload string) map[string]string {
 	return map[string]string{
 		LabelNameKey:     crName,
@@ -65,9 +60,8 @@ func workloadLabels(crName, workload string) map[string]string {
 type ElasticWorkloadReconciler struct {
 	client.Client
 	Scheme  *runtime.Scheme
-	Metrics MetricsReader // 数据面 KV Router 的 ttft_p95 读取器(幕4b;单测注入 fake)
+	Metrics MetricsReader
 
-	// Recorder 发 K8s Events(幕6b:扩缩可见性;nil 安全,单测可不配)
 	Recorder record.EventRecorder
 }
 
@@ -79,7 +73,6 @@ type ElasticWorkloadReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// 每次一个 ElasticWorkload 被创建/修改/删除都会触发一次;失败返回 error → 退避重试。
 func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var ew aiinfrav1alpha1.ElasticWorkload
 	if err := r.Get(ctx, req.NamespacedName, &ew); err != nil {
@@ -137,7 +130,6 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return ctrl.Result{RequeueAfter: tickSeconds}, nil
 }
 
-// desiredDeployment 构造某个工作负载的 Deployment(仅创建时用 spec.replicas 作为初始值)
 func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.ElasticWorkload, workload string) (*appsv1.Deployment, error) {
 	var (
 		name      string
@@ -200,11 +192,9 @@ func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.Elasti
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
 						{
-							Name:    workload,
-							Image:   image,
-							Command: command,
-							// gpuPerWorker/GPUPerInstance=0 → 不请求 GPU(无 GPU 集群/数据面 mock 场景);
-							// >0 → 请求 nvidia.com/gpu(真 GPU 集群)。L2 用 0,busybox 才能真的 Ready。
+							Name:           workload,
+							Image:          image,
+							Command:        command,
 							Resources:      requirements,
 							ReadinessProbe: probe,
 						},
@@ -213,14 +203,12 @@ func (r *ElasticWorkloadReconciler) desiredDeployment(ew *aiinfrav1alpha1.Elasti
 			},
 		},
 	}
-	// 子资源归 CR 所有:删 CR → 级联删 Deployment(面试必答:ownerReference)
 	if err := controllerutil.SetControllerReference(ew, deploy, r.Scheme); err != nil {
 		return nil, err
 	}
 	return deploy, nil
 }
 
-// gpuLimits:gpus<=0 → 不请求 GPU(返回 nil,容器无资源限制);>0 → 请求 nvidia.com/gpu。
 func gpuLimits(gpus int32) corev1.ResourceList {
 	if gpus <= 0 {
 		return nil
@@ -230,7 +218,6 @@ func gpuLimits(gpus int32) corev1.ResourceList {
 	}
 }
 
-// ensureDeployment 保证子 Deployment 存在且归 CR 所有(幂等;不动已存在的 replicas,避免与 apply 阶段打架)
 func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload, workload string) error {
 	logger := logf.FromContext(ctx)
 	desired, err := r.desiredDeployment(ew, workload)
@@ -251,7 +238,6 @@ func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *ai
 		return err
 	}
 
-	// 已存在 → 确认归我们管(不强行收养未标记的资源)
 	if !isOwnedBy(&existing, ew) {
 		return fmt.Errorf("deployment %s/%s exists but is not owned by this ElasticWorkload; refusing to adopt",
 			ew.Namespace, desired.Name)
@@ -275,10 +261,6 @@ func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *ai
 	return fmt.Errorf("owned deployment %s has no managed container %s", existing.Name, workload)
 }
 
-// finalize 处理删除:标记 Deleting(可见性),然后移除 finalizer 放行删除。
-// 子资源由 ownerReference 级联回收,不需要这里动手;finalizer 的意义是:
-//   - 删除可见性(phase=Deleting)
-//   - 若将来需要优雅收尾(vLLM drain 等),这里是 hook 点
 func (r *ElasticWorkloadReconciler) finalize(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) error {
 	logger := logf.FromContext(ctx)
 	if ew.Status.Phase != "Deleting" {
@@ -297,7 +279,6 @@ func (r *ElasticWorkloadReconciler) finalize(ctx context.Context, ew *aiinfrav1a
 	return nil
 }
 
-// isOwnedBy 判断 Deployment 是否被 CR 以 controller ownerReference 拥有
 func isOwnedBy(obj *appsv1.Deployment, ew *aiinfrav1alpha1.ElasticWorkload) bool {
 	for _, ref := range obj.OwnerReferences {
 		if ref.Controller != nil && *ref.Controller && ref.UID == ew.UID {
@@ -307,7 +288,6 @@ func isOwnedBy(obj *appsv1.Deployment, ew *aiinfrav1alpha1.ElasticWorkload) bool
 	return false
 }
 
-// event 是事件记录的 nil 安全包装(单测不配 Recorder 也不 panic)
 func (r *ElasticWorkloadReconciler) event(ew *aiinfrav1alpha1.ElasticWorkload, eventType, reason, msg string) {
 	if r.Recorder != nil {
 		r.Recorder.Event(ew, eventType, reason, msg)
