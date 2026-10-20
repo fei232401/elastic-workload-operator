@@ -128,7 +128,7 @@ func (r *ElasticWorkloadReconciler) reconcileHandoff(ctx context.Context, ew *ai
 		return ctrl.Result{}, err
 	}
 	if ew.Status.Handoff == nil {
-		return ctrl.Result{RequeueAfter: tickSeconds}, nil
+		return ctrl.Result{RequeueAfter: tickInterval}, nil
 	}
 	return ctrl.Result{RequeueAfter: handoffPoll}, nil
 }

@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -29,7 +30,7 @@ func TestReconcile_AddsFinalizerAndPhaseRunning(t *testing.T) {
 	if err := r.Get(context.Background(), types.NamespacedName{Name: "demo", Namespace: "default"}, got); err != nil {
 		t.Fatal(err)
 	}
-	if !contains(got.Finalizers, FinalizerName) {
+	if !slices.Contains(got.Finalizers, FinalizerName) {
 		t.Fatalf("want finalizer %s, got %v", FinalizerName, got.Finalizers)
 	}
 	if got.Status.Phase != "Running" {
@@ -50,15 +51,6 @@ func TestReconcile_DeletionRemovesFinalizerAndDeletes(t *testing.T) {
 	if !apierrors.IsNotFound(err) {
 		t.Fatalf("CR 应已被删除, err=%v", err)
 	}
-}
-
-func contains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
-		}
-	}
-	return false
 }
 
 // 模拟 kubectl delete:CR 已带 deletionTimestamp + finalizer。

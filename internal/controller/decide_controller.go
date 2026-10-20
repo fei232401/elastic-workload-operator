@@ -10,7 +10,7 @@ import (
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
-const tickSeconds = 5 * time.Second
+const tickInterval = 5 * time.Second
 
 type MetricsReader interface {
 	TTFTP95MS(ctx context.Context, source aiinfrav1alpha1.MetricSource) (int32, error)
@@ -41,10 +41,10 @@ func (r *ElasticWorkloadReconciler) decideStep(ctx context.Context, ew *aiinfrav
 	logger.Info("observe metric", "ttft_p95_ms", ttft, "allocation", alloc)
 
 	if last := lastScaleTime(ew); last != nil {
-		hold := time.Duration(ew.Spec.ScalingPolicy.MinHoldDuration) * tickSeconds
+		hold := time.Duration(ew.Spec.ScalingPolicy.MinHoldDuration) * tickInterval
 		if since := time.Since(*last); since < hold {
 			logger.Info("min_hold: skip", "since", since.Round(time.Second), "hold", hold)
-			return ScalingDecision{Action: "none"}, nil
+			return ScalingDecision{Action: actionNone}, nil
 		}
 	}
 

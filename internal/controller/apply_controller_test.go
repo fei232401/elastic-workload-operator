@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -50,7 +50,7 @@ func TestReconcile_OverloadScalesBothAndRecordsEvent(t *testing.T) {
 
 func TestReconcile_EmitsScaleEvent(t *testing.T) {
 	r, _ := newTestEnv(t, 412, nil)
-	rec := record.NewFakeRecorder(10)
+	rec := events.NewFakeRecorder(10)
 	r.Recorder = rec
 
 	if _, err := r.Reconcile(context.Background(), ctrl.Request{

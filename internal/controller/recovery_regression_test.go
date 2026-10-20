@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -204,7 +205,7 @@ func TestRecovery_StatusWriteFailureAfterFinalizer(t *testing.T) {
 		},
 	})
 	_, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: types.NamespacedName{Name: "demo", Namespace: "default"}})
-	if err == nil || !contains(fetchTestWorkload(t, r).Finalizers, FinalizerName) {
+	if err == nil || !slices.Contains(fetchTestWorkload(t, r).Finalizers, FinalizerName) {
 		t.Fatal("expected finalizer to persist despite failed status writes")
 	}
 	failStatus = false

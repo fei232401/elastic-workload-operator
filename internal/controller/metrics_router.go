@@ -42,8 +42,8 @@ func invalidMetric(reason, message string) error {
 	return &metricValidationError{reason: reason, message: message}
 }
 
-func NewRouterMetrics(url string) MetricsReader {
-	reader, _ := NewRouterMetricsWithPolicy(url, MetricsPolicy{
+func NewRouterMetrics(routerURL string) MetricsReader {
+	reader, _ := NewRouterMetricsWithPolicy(routerURL, MetricsPolicy{
 		MaxAge:        30 * time.Second,
 		MinSamples:    20,
 		MaxFutureSkew: 5 * time.Second,
@@ -51,12 +51,12 @@ func NewRouterMetrics(url string) MetricsReader {
 	return reader
 }
 
-func NewRouterMetricsWithPolicy(url string, policy MetricsPolicy) (MetricsReader, error) {
+func NewRouterMetricsWithPolicy(routerURL string, policy MetricsPolicy) (MetricsReader, error) {
 	if policy.MaxAge <= 0 || policy.MinSamples < 1 || policy.MaxFutureSkew < 0 {
 		return nil, fmt.Errorf("metric policy requires positive max age and sample count, and non-negative clock tolerance")
 	}
 	return &routerMetrics{
-		url:    strings.TrimRight(url, "/"),
+		url:    strings.TrimRight(routerURL, "/"),
 		client: &http.Client{Timeout: 2 * time.Second},
 		policy: policy,
 	}, nil

@@ -20,6 +20,12 @@ const (
 	conditionProgressing  = "Progressing"
 	conditionMetricsReady = "MetricsReady"
 	scalingHistoryLimit   = 50
+
+	phasePending     = "Pending"
+	phaseProgressing = "Progressing"
+	phaseRunning     = "Running"
+	phaseDegraded    = "Degraded"
+	phaseDeleting    = "Deleting"
 )
 
 func newCondition(ew *aiinfrav1alpha1.ElasticWorkload, kind string, status metav1.ConditionStatus, reason, message string) metav1.Condition {
@@ -60,7 +66,7 @@ func (r *ElasticWorkloadReconciler) initializeAllocation(ctx context.Context, ew
 		return err
 	}
 	if ew.Status.Phase == "" {
-		ew.Status.Phase = "Pending"
+		ew.Status.Phase = phasePending
 	}
 	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionInitialized, metav1.ConditionTrue,
 		reason, "Committed replica targets are initialized"))
@@ -160,7 +166,7 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 	ew.Status.ReadyReplicas = replicas
 	status, progressing := metav1.ConditionFalse, metav1.ConditionTrue
 	message := "Waiting for Deployments to observe their generation and reach committed replica targets"
-	ew.Status.Phase = "Progressing"
+	ew.Status.Phase = phaseProgressing
 	if ready && ew.Status.Handoff != nil {
 		reason = "Handoff" + ew.Status.Handoff.Phase
 		message = "Checkpointed replica handoff is in progress"
@@ -168,10 +174,10 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 	} else if ready {
 		status, progressing = metav1.ConditionTrue, metav1.ConditionFalse
 		reason, message = "ReplicaTargetsAvailable", "Both Deployments have reached committed replica targets"
-		ew.Status.Phase = "Running"
+		ew.Status.Phase = phaseRunning
 	} else {
 		if reason == "DeploymentProgressDeadlineExceeded" {
-			ew.Status.Phase = "Degraded"
+			ew.Status.Phase = phaseDegraded
 			progressing = metav1.ConditionFalse
 		}
 		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionMetricsReady, metav1.ConditionUnknown,
@@ -213,7 +219,7 @@ func (r *ElasticWorkloadReconciler) reportFailure(ctx context.Context, ew *aiinf
 	if len(message) > 512 {
 		message = "Controller could not complete the operation; consult controller logs"
 	}
-	ew.Status.Phase = "Degraded"
+	ew.Status.Phase = phaseDegraded
 	if apimeta.FindStatusCondition(ew.Status.Conditions, conditionInitialized) == nil {
 		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionInitialized, metav1.ConditionFalse, reason, message))
 	}

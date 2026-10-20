@@ -30,7 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -63,7 +63,7 @@ type ElasticWorkloadReconciler struct {
 	Metrics     MetricsReader
 	Checkpoints CheckpointClient
 
-	Recorder record.EventRecorder
+	Recorder events.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=aiinfra.example.com,resources=elasticworkloads,verbs=get;list;watch;create;update;patch;delete
@@ -73,6 +73,7 @@ type ElasticWorkloadReconciler struct {
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -113,17 +114,17 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ObservationFailed", err))
 	}
 	if !ready {
-		return ctrl.Result{RequeueAfter: tickSeconds}, nil
+		return ctrl.Result{RequeueAfter: tickInterval}, nil
 	}
 	dec, err := r.decideStep(ctx, &ew)
 	if err != nil {
 		logf.FromContext(ctx).Error(err, "Metrics unavailable; keeping committed allocation")
-		return ctrl.Result{RequeueAfter: tickSeconds}, r.reportMetrics(ctx, &ew, err)
+		return ctrl.Result{RequeueAfter: tickInterval}, r.reportMetrics(ctx, &ew, err)
 	}
 	if err := r.reportMetrics(ctx, &ew, nil); err != nil {
 		return ctrl.Result{}, err
 	}
-	if dec.Action != "none" {
+	if dec.Action != actionNone {
 		if err := r.commit(ctx, &ew, dec); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -137,7 +138,7 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "ObservationFailed", err))
 		}
 	}
-	return ctrl.Result{RequeueAfter: tickSeconds}, nil
+	return ctrl.Result{RequeueAfter: tickInterval}, nil
 }
 
 func initialReplicas(ew *aiinfrav1alpha1.ElasticWorkload, workload string) int32 {
@@ -259,8 +260,8 @@ func (r *ElasticWorkloadReconciler) ensureDeployment(ctx context.Context, ew *ai
 
 func (r *ElasticWorkloadReconciler) finalize(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) error {
 	logger := logf.FromContext(ctx)
-	if ew.Status.Phase != "Deleting" {
-		ew.Status.Phase = "Deleting"
+	if ew.Status.Phase != phaseDeleting {
+		ew.Status.Phase = phaseDeleting
 		if err := r.Status().Update(ctx, ew); err != nil {
 			return err
 		}
@@ -277,13 +278,13 @@ func (r *ElasticWorkloadReconciler) finalize(ctx context.Context, ew *aiinfrav1a
 
 func (r *ElasticWorkloadReconciler) event(ew *aiinfrav1alpha1.ElasticWorkload, eventType, reason, msg string) {
 	if r.Recorder != nil {
-		r.Recorder.Event(ew, eventType, reason, msg)
+		r.Recorder.Eventf(ew, nil, eventType, reason, "Reconcile", "%s", msg)
 	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ElasticWorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	r.Recorder = mgr.GetEventRecorderFor("elasticworkload")
+	r.Recorder = mgr.GetEventRecorder("elasticworkload")
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiinfrav1alpha1.ElasticWorkload{}).
 		Owns(&appsv1.Deployment{}).

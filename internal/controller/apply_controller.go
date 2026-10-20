@@ -39,7 +39,7 @@ func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alp
 	if n := len(ew.Status.ScalingHistory); n > scalingHistoryLimit {
 		ew.Status.ScalingHistory = append([]aiinfrav1alpha1.ScalingEvent(nil), ew.Status.ScalingHistory[n-scalingHistoryLimit:]...)
 	}
-	ew.Status.Phase = "Progressing"
+	ew.Status.Phase = phaseProgressing
 	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionReady, metav1.ConditionFalse, "AllocationPending", "Committed target is awaiting workload convergence"))
 	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionProgressing, metav1.ConditionTrue, "AllocationPending", "Applying committed replica targets"))
 	if err := r.Status().Update(ctx, ew); err != nil {
@@ -80,10 +80,10 @@ func (r *ElasticWorkloadReconciler) apply(ctx context.Context, ew *aiinfrav1alph
 
 func decisionReason(dec ScalingDecision) string {
 	switch dec.Action {
-	case "scale_inference_up":
-		return "overload"
-	case "scale_inference_down":
-		return "recovery"
+	case actionScaleInferenceUp:
+		return reasonOverload
+	case actionScaleInferenceDown:
+		return reasonRecovery
 	}
-	return "none"
+	return actionNone
 }

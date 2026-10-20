@@ -4,6 +4,14 @@ import (
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
 
+const (
+	actionNone               = "none"
+	actionScaleInferenceUp   = "scale_inference_up"
+	actionScaleInferenceDown = "scale_inference_down"
+	reasonOverload           = "overload"
+	reasonRecovery           = "recovery"
+)
+
 type ScalingDecision struct {
 	Action           string
 	DesiredTraining  int32
@@ -22,7 +30,7 @@ func decide(ttftP95MS int32, cur *aiinfrav1alpha1.WorkloadReplicas, pol *aiinfra
 			return noop(cur)
 		}
 		return ScalingDecision{
-			Action:           "scale_inference_up",
+			Action:           actionScaleInferenceUp,
 			DesiredInference: cur.Inference + step,
 			DesiredTraining:  cur.Training - step,
 			InferenceDelta:   step,
@@ -36,7 +44,7 @@ func decide(ttftP95MS int32, cur *aiinfrav1alpha1.WorkloadReplicas, pol *aiinfra
 			return noop(cur)
 		}
 		return ScalingDecision{
-			Action:           "scale_inference_down",
+			Action:           actionScaleInferenceDown,
 			DesiredInference: cur.Inference - step,
 			DesiredTraining:  cur.Training + step,
 			InferenceDelta:   -step,
@@ -49,7 +57,7 @@ func decide(ttftP95MS int32, cur *aiinfrav1alpha1.WorkloadReplicas, pol *aiinfra
 
 func noop(cur *aiinfrav1alpha1.WorkloadReplicas) ScalingDecision {
 	return ScalingDecision{
-		Action:           "none",
+		Action:           actionNone,
 		DesiredTraining:  cur.Training,
 		DesiredInference: cur.Inference,
 	}

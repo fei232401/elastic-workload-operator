@@ -12,7 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 
 	aiinfrav1alpha1 "github.com/fei/elastic-workload-operator/api/v1alpha1"
 )
@@ -37,7 +37,7 @@ func (f *fakeCheckpoints) Request(_ context.Context, endpoint string, id int64) 
 	return CheckpointStatus{CheckpointID: id - 1}, nil
 }
 
-func newHandoffEnv(t *testing.T, ttft int32) (*ElasticWorkloadReconciler, *fakeCheckpoints, *record.FakeRecorder) {
+func newHandoffEnv(t *testing.T, ttft int32) (*ElasticWorkloadReconciler, *fakeCheckpoints, *events.FakeRecorder) {
 	t.Helper()
 	r, _ := newTestEnv(t, ttft, nil)
 	ew := fetchTestWorkload(t, r)
@@ -46,7 +46,7 @@ func newHandoffEnv(t *testing.T, ttft int32) (*ElasticWorkloadReconciler, *fakeC
 		t.Fatal(err)
 	}
 	checkpoints := &fakeCheckpoints{step: 1234}
-	recorder := record.NewFakeRecorder(50)
+	recorder := events.NewFakeRecorder(50)
 	r.Checkpoints, r.Recorder = checkpoints, recorder
 	return r, checkpoints, recorder
 }
@@ -95,14 +95,14 @@ func handoffPhase(t *testing.T, r *ElasticWorkloadReconciler) string {
 	return ""
 }
 
-func drainEvents(recorder *record.FakeRecorder) string {
-	var events []string
+func drainEvents(recorder *events.FakeRecorder) string {
+	var seen []string
 	for {
 		select {
 		case event := <-recorder.Events:
-			events = append(events, event)
+			seen = append(seen, event)
 		default:
-			return strings.Join(events, "\n")
+			return strings.Join(seen, "\n")
 		}
 	}
 }
@@ -153,10 +153,10 @@ func TestHandoff_CheckpointsBeforeReleasingTrainingThenGrowsInference(t *testing
 	if got.Status.Handoff != nil || got.Status.Phase != "Running" {
 		t.Fatalf("handoff not completed: %+v", got.Status)
 	}
-	events := drainEvents(recorder)
+	emitted := drainEvents(recorder)
 	for _, reason := range []string{"DecisionCommitted", "CheckpointCompleted", "HandoffCompleted"} {
-		if !strings.Contains(events, reason) {
-			t.Fatalf("missing %s event in:\n%s", reason, events)
+		if !strings.Contains(emitted, reason) {
+			t.Fatalf("missing %s event in:\n%s", reason, emitted)
 		}
 	}
 }
@@ -178,8 +178,8 @@ func TestHandoff_TimeoutReleasesWithoutCheckpoint(t *testing.T) {
 	if replicasOf(t, r, WorkloadTraining) != 3 {
 		t.Fatal("training not released after timeout")
 	}
-	if events := drainEvents(recorder); !strings.Contains(events, "CheckpointTimeout") || !strings.Contains(events, "connection refused") {
-		t.Fatalf("timeout event missing cause:\n%s", events)
+	if emitted := drainEvents(recorder); !strings.Contains(emitted, "CheckpointTimeout") || !strings.Contains(emitted, "connection refused") {
+		t.Fatalf("timeout event missing cause:\n%s", emitted)
 	}
 }
 
