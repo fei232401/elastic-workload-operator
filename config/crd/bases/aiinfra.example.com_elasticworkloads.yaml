@@ -130,6 +130,12 @@ spec:
                 description: ScalingPolicy controls when replicas move between the
                   two workloads.
                 properties:
+                  handoffTimeoutSeconds:
+                    default: 300
+                    format: int32
+                    maximum: 3600
+                    minimum: 1
+                    type: integer
                   maxScaleStep:
                     description: MaxScaleStep is the largest replica change per decision.
                     format: int32
@@ -406,12 +412,285 @@ spec:
                     - Releasing
                     - Acquiring
                     type: string
+                  phaseStartedAt:
+                    format: date-time
+                    type: string
                   releasedAt:
                     format: date-time
                     type: string
                   requestedAt:
                     format: date-time
                     type: string
+                  specSnapshot:
+                    description: ElasticWorkloadSpec declares a training workload
+                      and an inference workload that share a replica budget.
+                    properties:
+                      inference:
+                        description: Inference is the latency-sensitive serving workload.
+                        properties:
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          gpuPerInstance:
+                            description: GPUPerInstance is the nvidia.com/gpu count
+                              requested by each instance; zero requests no GPU.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                            x-kubernetes-validations:
+                            - message: GPU units are immutable
+                              rule: self == oldSelf
+                          image:
+                            type: string
+                          maxReplicas:
+                            description: MaxReplicas is the highest inference replica
+                              count the controller may set.
+                            format: int32
+                            type: integer
+                          minReplicas:
+                            description: MinReplicas is the lowest inference replica
+                              count the controller may set.
+                            format: int32
+                            type: integer
+                          prefixCaching:
+                            description: PrefixCaching is rejected by validation;
+                              engine flags belong in Command.
+                            type: boolean
+                          readinessHTTP:
+                            properties:
+                              path:
+                                default: /health
+                                pattern: ^/
+                                type: string
+                              port:
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                            required:
+                            - port
+                            type: object
+                          replicas:
+                            description: Replicas is the initial number of inference
+                              instances.
+                            format: int32
+                            type: integer
+                            x-kubernetes-validations:
+                            - message: initial replicas are immutable; recreate the
+                                workload to change its budget
+                              rule: self == oldSelf
+                          resources:
+                            properties:
+                              limits:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: ResourceList is a set of (resource name,
+                                  quantity) pairs.
+                                type: object
+                              requests:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: ResourceList is a set of (resource name,
+                                  quantity) pairs.
+                                type: object
+                            type: object
+                        required:
+                        - gpuPerInstance
+                        - image
+                        - maxReplicas
+                        - minReplicas
+                        - replicas
+                        type: object
+                        x-kubernetes-validations:
+                        - message: 'inference: minReplicas <= replicas <= maxReplicas'
+                          rule: self.minReplicas <= self.replicas && self.replicas
+                            <= self.maxReplicas
+                      scalingPolicy:
+                        description: ScalingPolicy controls when replicas move between
+                          the two workloads.
+                        properties:
+                          handoffTimeoutSeconds:
+                            default: 300
+                            format: int32
+                            maximum: 3600
+                            minimum: 1
+                            type: integer
+                          maxScaleStep:
+                            description: MaxScaleStep is the largest replica change
+                              per decision.
+                            format: int32
+                            type: integer
+                          metrics:
+                            description: Metrics selects the TTFT source for this
+                              workload; unset fields fall back to the controller defaults.
+                            properties:
+                              model:
+                                description: Model is the logical model whose TTFT
+                                  window is requested; the router must echo it back.
+                                maxLength: 200
+                                minLength: 1
+                                type: string
+                              routerURL:
+                                description: RouterURL overrides the controller's
+                                  --router-url for this workload.
+                                maxLength: 2048
+                                pattern: ^https?://
+                                type: string
+                            type: object
+                          minHoldDuration:
+                            description: MinHoldDuration is the number of 5s ticks
+                              to wait after a scaling action before deciding again.
+                            format: int32
+                            type: integer
+                          slo:
+                            description: SLO is the TTFT P95 threshold in milliseconds.
+                            format: int32
+                            type: integer
+                          targetMetric:
+                            enum:
+                            - ttft_p95
+                            type: string
+                        required:
+                        - maxScaleStep
+                        - minHoldDuration
+                        - slo
+                        - targetMetric
+                        type: object
+                        x-kubernetes-validations:
+                        - message: slo must be > 0
+                          rule: self.slo > 0
+                        - message: minHoldDuration must be >= 0
+                          rule: self.minHoldDuration >= 0
+                        - message: maxScaleStep must be >= 1
+                          rule: self.maxScaleStep >= 1
+                      training:
+                        description: Training is the preemptible workload that lends
+                          replicas to inference under load.
+                        properties:
+                          checkpoint:
+                            description: Checkpoint enables the checkpoint handshake
+                              before training membership changes.
+                            properties:
+                              claimName:
+                                description: |-
+                                  ClaimName is an existing PersistentVolumeClaim mounted at /ckpt in every training pod.
+                                  All ranks must share it so that any pod can report the latest checkpoint.
+                                maxLength: 253
+                                minLength: 1
+                                type: string
+                              port:
+                                default: 8080
+                                description: Port serves POST /checkpoint?id=N and
+                                  GET /checkpoint on every training pod.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              rendezvousPort:
+                                default: 29400
+                                description: RendezvousPort is the torchrun c10d rendezvous
+                                  port hosted by ordinal 0.
+                                format: int32
+                                maximum: 65535
+                                minimum: 1
+                                type: integer
+                              timeoutSeconds:
+                                default: 60
+                                description: TimeoutSeconds bounds the wait for a
+                                  requested checkpoint before the handoff proceeds
+                                  without it.
+                                format: int32
+                                maximum: 3600
+                                minimum: 1
+                                type: integer
+                            required:
+                            - claimName
+                            type: object
+                          command:
+                            items:
+                              type: string
+                            type: array
+                          gpuPerWorker:
+                            description: GPUPerWorker is the nvidia.com/gpu count
+                              requested by each worker; zero requests no GPU.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                            x-kubernetes-validations:
+                            - message: GPU units are immutable
+                              rule: self == oldSelf
+                          image:
+                            type: string
+                          maxReplicas:
+                            description: MaxReplicas is the highest training replica
+                              count the controller may set.
+                            format: int32
+                            type: integer
+                          minReplicas:
+                            description: MinReplicas is the lowest training replica
+                              count the controller may set.
+                            format: int32
+                            type: integer
+                          replicas:
+                            description: Replicas is the initial number of training
+                              workers.
+                            format: int32
+                            type: integer
+                            x-kubernetes-validations:
+                            - message: initial replicas are immutable; recreate the
+                                workload to change its budget
+                              rule: self == oldSelf
+                          resources:
+                            properties:
+                              limits:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: ResourceList is a set of (resource name,
+                                  quantity) pairs.
+                                type: object
+                              requests:
+                                additionalProperties:
+                                  anyOf:
+                                  - type: integer
+                                  - type: string
+                                  pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                                  x-kubernetes-int-or-string: true
+                                description: ResourceList is a set of (resource name,
+                                  quantity) pairs.
+                                type: object
+                            type: object
+                        required:
+                        - gpuPerWorker
+                        - image
+                        - maxReplicas
+                        - minReplicas
+                        - replicas
+                        type: object
+                        x-kubernetes-validations:
+                        - message: 'training: minReplicas <= replicas <= maxReplicas'
+                          rule: self.minReplicas <= self.replicas && self.replicas
+                            <= self.maxReplicas
+                    required:
+                    - inference
+                    - scalingPolicy
+                    - training
+                    type: object
+                    x-kubernetes-validations:
+                    - message: only equal GPU units per replica are supported
+                      rule: self.training.gpuPerWorker == self.inference.gpuPerInstance
                   to:
                     description: WorkloadReplicas holds a replica count for each workload.
                     properties:

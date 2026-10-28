@@ -1,0 +1,140 @@
+{
+  "status": "passed",
+  "started_at": "2026-10-21T03:28:59.602953+00:00",
+  "checks": [
+    {
+      "name": "spec_guard_CheckpointRequested"
+    },
+    {
+      "name": "spec_guard_Releasing"
+    },
+    {
+      "name": "releasing_timeout",
+      "phaseStartedAt": "2026-10-21T03:29:16Z",
+      "ready": {
+        "lastTransitionTime": "2026-10-21T03:29:14Z",
+        "message": "Handoff phase Releasing exceeded its deadline; retaining committed targets without automatic rollback",
+        "observedGeneration": 6,
+        "reason": "HandoffPhaseTimeout",
+        "status": "False",
+        "type": "Ready"
+      },
+      "progressing": {
+        "lastTransitionTime": "2026-10-21T03:29:21Z",
+        "message": "Handoff phase Releasing exceeded its deadline; retaining committed targets without automatic rollback",
+        "observedGeneration": 6,
+        "reason": "HandoffPhaseTimeout",
+        "status": "False",
+        "type": "Progressing"
+      }
+    },
+    {
+      "name": "restart_keeps_deadline"
+    },
+    {
+      "name": "spec_guard_Acquiring"
+    },
+    {
+      "name": "acquiring_timeout",
+      "handoff": {
+        "checkpointID": 1792553354887,
+        "checkpointStep": 42,
+        "checkpointedAt": "2026-10-21T03:29:16Z",
+        "from": {
+          "inference": 1,
+          "training": 1
+        },
+        "phase": "Acquiring",
+        "phaseStartedAt": "2026-10-21T03:29:49Z",
+        "releasedAt": "2026-10-21T03:29:49Z",
+        "requestedAt": "2026-10-21T03:29:14Z",
+        "specSnapshot": {
+          "inference": {
+            "command": [
+              "sleep",
+              "36000"
+            ],
+            "gpuPerInstance": 0,
+            "image": "busybox:1.36",
+            "maxReplicas": 2,
+            "minReplicas": 1,
+            "replicas": 1,
+            "resources": {}
+          },
+          "scalingPolicy": {
+            "handoffTimeoutSeconds": 5,
+            "maxScaleStep": 1,
+            "metrics": {
+              "routerURL": "http://closure-probe-metrics:8080"
+            },
+            "minHoldDuration": 1,
+            "slo": 300,
+            "targetMetric": "ttft_p95"
+          },
+          "training": {
+            "checkpoint": {
+              "claimName": "closure-probe-ckpt",
+              "port": 8080,
+              "rendezvousPort": 29400,
+              "timeoutSeconds": 90
+            },
+            "command": [
+              "python",
+              "-u",
+              "-c",
+              "import json\nfrom http.server import BaseHTTPRequestHandler, HTTPServer\nfrom pathlib import Path\nfrom urllib.parse import parse_qs, urlparse\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.end_headers()\n        self.wfile.write(b'ok')\n    def do_POST(self):\n        request_id = int(parse_qs(urlparse(self.path).query)['id'][0])\n        self.send_response(202)\n        self.end_headers()\n        self.wfile.write(json.dumps({'checkpoint_id': request_id if Path('/ckpt/allow').exists() else 0, 'step': 42}).encode())\n    def log_message(self, *args):\n        pass\nHTTPServer(('0.0.0.0', 8080), Handler).serve_forever()\n"
+            ],
+            "gpuPerWorker": 0,
+            "image": "ew-trainer:v1",
+            "maxReplicas": 1,
+            "minReplicas": 0,
+            "replicas": 1,
+            "resources": {}
+          }
+        },
+        "to": {
+          "inference": 2,
+          "training": 0
+        }
+      },
+      "ready": {
+        "lastTransitionTime": "2026-10-21T03:29:14Z",
+        "message": "Handoff phase Acquiring exceeded its deadline; retaining committed targets without automatic rollback",
+        "observedGeneration": 8,
+        "reason": "HandoffPhaseTimeout",
+        "status": "False",
+        "type": "Ready"
+      }
+    },
+    {
+      "name": "fault_removal_recovers",
+      "desired": {
+        "inference": 2,
+        "training": 0
+      }
+    },
+    {
+      "name": "timeout_events",
+      "events": [
+        {
+          "reason": "HandoffPhaseTimeout",
+          "count": 1,
+          "message": "Handoff phase exceeded its deadline; committed targets are retained; inspect workloads before manual recovery"
+        },
+        {
+          "reason": "HandoffPhaseTimeout",
+          "count": 1,
+          "message": "Handoff phase exceeded its deadline; committed targets are retained; inspect workloads before manual recovery"
+        }
+      ]
+    }
+  ],
+  "conditions": {
+    "cluster": "Kind single node",
+    "namespace": "ew-validation",
+    "trainer": "HTTP checkpoint protocol stub, not real training",
+    "inference": "busybox with injected readiness gate"
+  },
+  "owned_resources_cleaned": true,
+  "finished_at": "2026-10-21T03:30:30.903507+00:00"
+}

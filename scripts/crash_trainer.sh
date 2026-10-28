@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 K="kubectl --kubeconfig ${1:?usage: crash_trainer.sh path/to/kubeconfig} --context kind-ew-recovery-lab -n ew-validation"
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/ew-crash.XXXXXX")
+trap 'rm -rf "$work_dir"' EXIT
 events() { $K exec handoff-training-0 -- cat /ckpt/events.jsonl; }
-events > ${TMPDIR:-/tmp}/ev-before.jsonl
+events > "$work_dir/ev-before.jsonl" || exit 1
 kill_time=$($K exec handoff-training-1 -- python -c "
 import os, signal, time
 for pid in os.listdir('/proc'):
@@ -17,13 +19,14 @@ for pid in os.listdir('/proc'):
 ")
 echo "kill_time=$kill_time"
 [ -n "$kill_time" ] || { echo "没找到训练 worker 进程"; exit 1; }
+recovered=0
 for i in $(seq 1 120); do
   sleep 3
-  events > ${TMPDIR:-/tmp}/ev-after.jsonl 2>/dev/null || continue
-  python3 - "$kill_time" <<'P' && break
+  events > "$work_dir/ev-after.jsonl" 2>/dev/null || continue
+  python3 - "$kill_time" "$work_dir/ev-after.jsonl" <<'P' && { recovered=1; break; }
 import json, sys
 kill = float(sys.argv[1])
-rows = [json.loads(l) for l in open("${TMPDIR:-/tmp}/ev-after.jsonl") if l.strip()]
+rows = [json.loads(line) for line in open(sys.argv[2]) if line.strip()]
 resume = [r for r in rows if r["event"] == "resume" and r["time"] > kill]
 if not resume:
     sys.exit(1)
@@ -40,4 +43,5 @@ print(json.dumps({"kill_time": kill, "estimated_step_at_kill": round(at_kill), "
   "recovery_s": round(resume["time"] - kill, 1)}, ensure_ascii=False, indent=1))
 P
 done
+[ "$recovered" -eq 1 ] || { echo "训练未在恢复期限内恢复"; exit 1; }
 $K get pods -l elasticworkload.aiinfra.example.com/workload=training

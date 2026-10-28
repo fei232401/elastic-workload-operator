@@ -133,6 +133,11 @@ type ScalingPolicy struct {
 	MinHoldDuration int32 `json:"minHoldDuration"`
 	// MaxScaleStep is the largest replica change per decision.
 	MaxScaleStep int32 `json:"maxScaleStep"`
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=3600
+	// +kubebuilder:default=300
+	// +optional
+	HandoffTimeoutSeconds int32 `json:"handoffTimeoutSeconds,omitempty"`
 	// Metrics selects the TTFT source for this workload; unset fields fall back to the controller defaults.
 	// +optional
 	Metrics *MetricSource `json:"metrics,omitempty"`
@@ -184,6 +189,10 @@ type Handoff struct {
 	// CheckpointID is the monotonically increasing request identifier sent to the trainers.
 	CheckpointID int64       `json:"checkpointID"`
 	RequestedAt  metav1.Time `json:"requestedAt"`
+	// +optional
+	PhaseStartedAt *metav1.Time `json:"phaseStartedAt,omitempty"`
+	// +optional
+	SpecSnapshot *ElasticWorkloadSpec `json:"specSnapshot,omitempty"`
 	// +optional
 	CheckpointedAt *metav1.Time `json:"checkpointedAt,omitempty"`
 	// +optional

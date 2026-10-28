@@ -1,0 +1,25 @@
+{
+  "kill_time": 1792553494.9235568,
+  "estimated_step_at_kill": 255,
+  "seconds_per_step": 0.681,
+  "last_checkpoint_before_kill": {
+    "time": 1792553457.6842844,
+    "event": "checkpoint",
+    "step": 200,
+    "checkpoint_id": 1792553199300,
+    "reason": "periodic",
+    "world_size": 2
+  },
+  "checkpoints_between_kill_and_resume": [],
+  "resume": {
+    "time": 1792553499.1722867,
+    "event": "resume",
+    "step": 200,
+    "world_size": 2
+  },
+  "steps_lost": 55,
+  "work_lost_s": 37.2,
+  "recovery_s": 4.2,
+  "status": "passed",
+  "tmpdir_with_spaces": true
+}

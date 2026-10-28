@@ -1,0 +1,144 @@
+{
+  "started_at": "2026-10-21T03:24:33.909902+00:00",
+  "steps": [
+    {
+      "name": "prepared",
+      "at": "2026-10-21T03:25:10.292299+00:00",
+      "controller": "ew-operator:closure-20261020-v2"
+    },
+    {
+      "name": "initial",
+      "at": "2026-10-21T03:26:11.838145+00:00",
+      "resume": {
+        "time": 1792553119.290075,
+        "event": "resume",
+        "step": 0,
+        "world_size": 2
+      },
+      "statefulset_ready": 2
+    },
+    {
+      "name": "overload_handoff",
+      "at": "2026-10-21T03:26:35.115337+00:00",
+      "phases": [
+        {
+          "phase": "Releasing",
+          "seen_after_s": 3.2
+        },
+        {
+          "phase": "Acquiring",
+          "seen_after_s": 4.3
+        }
+      ],
+      "handoff_event": "training 2->1, inference 1->2; checkpoint 0s, release 1s, total 2.931s",
+      "requested_checkpoint": {
+        "time": 1792553174.390277,
+        "event": "checkpoint",
+        "step": 54,
+        "checkpoint_id": 1792553174328,
+        "reason": "requested",
+        "world_size": 2
+      },
+      "last_checkpoint_before_resume": {
+        "time": 1792553174.8205936,
+        "event": "checkpoint",
+        "step": 55,
+        "checkpoint_id": 1792553174328,
+        "reason": "member_leaving",
+        "world_size": 2
+      },
+      "resume": {
+        "time": 1792553193.8038745,
+        "event": "resume",
+        "step": 55,
+        "world_size": 1
+      },
+      "resumed_from_saved_step": true,
+      "training_paused_s": 19.41,
+      "total_s": 23.3
+    },
+    {
+      "name": "recovery_handoff",
+      "at": "2026-10-21T03:28:33.136394+00:00",
+      "phases": [
+        {
+          "phase": "CheckpointRequested",
+          "seen_after_s": 4.2
+        },
+        {
+          "phase": "Releasing",
+          "seen_after_s": 6.3
+        },
+        {
+          "phase": "Acquiring",
+          "seen_after_s": 39.6
+        }
+      ],
+      "handoff_event": "training 1->2, inference 2->1; checkpoint 1s, release 33s, total 1m52.797s",
+      "requested_checkpoint": {
+        "time": 1792553199.9192624,
+        "event": "checkpoint",
+        "step": 63,
+        "checkpoint_id": 1792553199300,
+        "reason": "requested",
+        "world_size": 1
+      },
+      "last_checkpoint_before_resume": {
+        "time": 1792553236.2230475,
+        "event": "checkpoint",
+        "step": 119,
+        "checkpoint_id": 1792553199300,
+        "reason": "member_leaving",
+        "world_size": 1
+      },
+      "resume": {
+        "time": 1792553310.9818347,
+        "event": "resume",
+        "step": 119,
+        "world_size": 2
+      },
+      "resumed_from_saved_step": true,
+      "training_paused_s": 111.06,
+      "total_s": 118.0
+    },
+    {
+      "name": "forced_delete_sigterm_recovery",
+      "at": "2026-10-21T03:30:24.027400+00:00",
+      "note": "kubectl delete --force still sends SIGTERM, so this measures graceful restart; scripts/crash_trainer.sh is the SIGKILL crash test",
+      "last_progress_before_kill": 150,
+      "last_checkpoint_before_kill": {
+        "time": 1792553236.2230475,
+        "event": "checkpoint",
+        "step": 119,
+        "checkpoint_id": 1792553199300,
+        "reason": "member_leaving",
+        "world_size": 1
+      },
+      "resume": {
+        "time": 1792553422.3503387,
+        "event": "resume",
+        "step": 152,
+        "world_size": 2
+      },
+      "steps_lost_at_least": -2,
+      "recovery_s": 86.94
+    },
+    {
+      "name": "loss_trace",
+      "at": "2026-10-21T03:30:24.325840+00:00",
+      "first": [
+        0.11976,
+        0.06523,
+        0.06184
+      ],
+      "last": [
+        0.11976,
+        0.06523,
+        0.06184
+      ],
+      "samples": 3
+    }
+  ],
+  "status": "passed",
+  "finished_at": "2026-10-21T03:30:24.326067+00:00"
+}

@@ -175,6 +175,15 @@ func (in *Handoff) DeepCopyInto(out *Handoff) {
 	out.From = in.From
 	out.To = in.To
 	in.RequestedAt.DeepCopyInto(&out.RequestedAt)
+	if in.PhaseStartedAt != nil {
+		in, out := &in.PhaseStartedAt, &out.PhaseStartedAt
+		*out = (*in).DeepCopy()
+	}
+	if in.SpecSnapshot != nil {
+		in, out := &in.SpecSnapshot, &out.SpecSnapshot
+		*out = new(ElasticWorkloadSpec)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.CheckpointedAt != nil {
 		in, out := &in.CheckpointedAt, &out.CheckpointedAt
 		*out = (*in).DeepCopy()

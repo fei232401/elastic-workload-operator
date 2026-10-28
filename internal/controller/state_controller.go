@@ -165,7 +165,7 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 	previous := ew.DeepCopy()
 	ew.Status.ReadyReplicas = replicas
 	status, progressing := metav1.ConditionFalse, metav1.ConditionTrue
-	message := "Waiting for Deployments to observe their generation and reach committed replica targets"
+	message := "Waiting for workloads to observe their generation and reach committed replica targets"
 	ew.Status.Phase = phaseProgressing
 	if ready && ew.Status.Handoff != nil {
 		reason = "Handoff" + ew.Status.Handoff.Phase
@@ -173,7 +173,7 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 		ready = false
 	} else if ready {
 		status, progressing = metav1.ConditionTrue, metav1.ConditionFalse
-		reason, message = "ReplicaTargetsAvailable", "Both Deployments have reached committed replica targets"
+		reason, message = "ReplicaTargetsAvailable", "Both workloads have reached committed replica targets"
 		ew.Status.Phase = phaseRunning
 	} else {
 		if reason == "DeploymentProgressDeadlineExceeded" {
@@ -182,6 +182,18 @@ func (r *ElasticWorkloadReconciler) reportWorkloads(ctx context.Context, ew *aii
 		}
 		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionMetricsReady, metav1.ConditionUnknown,
 			"WaitingForWorkloads", "New metric-driven decisions are suspended until workloads converge"))
+	}
+	stalledStatus := metav1.ConditionFalse
+	stalledReason, stalledMessage := "HandoffWithinDeadline", "No handoff phase has exceeded its deadline"
+	if handoffTimedOut(ew) {
+		stalledStatus = metav1.ConditionTrue
+		stalledReason = reasonHandoffPhaseTimeout
+		stalledMessage = fmt.Sprintf("Handoff phase %s exceeded its deadline; retaining committed targets without automatic rollback", ew.Status.Handoff.Phase)
+		status, progressing, ready = metav1.ConditionFalse, metav1.ConditionFalse, false
+		reason, message, ew.Status.Phase = stalledReason, stalledMessage, phaseDegraded
+	}
+	if ew.Status.Handoff != nil || apimeta.FindStatusCondition(ew.Status.Conditions, conditionHandoffStalled) != nil {
+		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionHandoffStalled, stalledStatus, stalledReason, stalledMessage))
 	}
 	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionReady, status, reason, message))
 	apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionProgressing, progressing, reason, message))
@@ -220,6 +232,10 @@ func (r *ElasticWorkloadReconciler) reportFailure(ctx context.Context, ew *aiinf
 		message = "Controller could not complete the operation; consult controller logs"
 	}
 	ew.Status.Phase = phaseDegraded
+	if reason == reasonHandoffSpecChanged {
+		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionMetricsReady, metav1.ConditionUnknown,
+			reason, "New metric-driven decisions are suspended until the original handoff spec is restored"))
+	}
 	if apimeta.FindStatusCondition(ew.Status.Conditions, conditionInitialized) == nil {
 		apimeta.SetStatusCondition(&ew.Status.Conditions, newCondition(ew, conditionInitialized, metav1.ConditionFalse, reason, message))
 	}

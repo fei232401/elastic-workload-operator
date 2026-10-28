@@ -9,6 +9,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -21,7 +23,41 @@ const (
 	handoffReleasing           = "Releasing"
 	handoffAcquiring           = "Acquiring"
 	handoffPoll                = time.Second
+	conditionHandoffStalled    = "HandoffStalled"
+	reasonHandoffSpecChanged   = "HandoffSpecChanged"
+	reasonHandoffPhaseTimeout  = "HandoffPhaseTimeout"
 )
+
+func (r *ElasticWorkloadReconciler) checkHandoffSpec(ctx context.Context, ew *aiinfrav1alpha1.ElasticWorkload) (bool, error) {
+	handoff := ew.Status.Handoff
+	if handoff.SpecSnapshot == nil {
+		previous := ew.DeepCopy()
+		handoff.SpecSnapshot = ew.Spec.DeepCopy()
+		return false, r.saveStatus(ctx, ew, previous)
+	}
+	return !equality.Semantic.DeepEqual(ew.Spec, *handoff.SpecSnapshot), nil
+}
+
+func handoffTimedOut(ew *aiinfrav1alpha1.ElasticWorkload) bool {
+	handoff := ew.Status.Handoff
+	if handoff == nil || handoff.Phase == handoffCheckpointRequested {
+		return false
+	}
+	started := handoff.PhaseStartedAt
+	if started == nil {
+		started = &handoff.RequestedAt
+		if handoff.Phase == handoffReleasing && handoff.CheckpointedAt != nil {
+			started = handoff.CheckpointedAt
+		} else if handoff.Phase == handoffAcquiring && handoff.ReleasedAt != nil {
+			started = handoff.ReleasedAt
+		}
+	}
+	seconds := ew.Spec.ScalingPolicy.HandoffTimeoutSeconds
+	if seconds <= 0 {
+		seconds = 300
+	}
+	return time.Since(started.Time) >= time.Duration(seconds)*time.Second
+}
 
 type CheckpointStatus struct {
 	CheckpointID int64 `json:"checkpoint_id"`
@@ -102,7 +138,7 @@ func (r *ElasticWorkloadReconciler) reconcileHandoff(ctx context.Context, ew *ai
 		}
 		if released {
 			now := metav1.Now()
-			h.Phase, h.ReleasedAt = handoffAcquiring, &now
+			h.Phase, h.ReleasedAt, h.PhaseStartedAt = handoffAcquiring, &now, &now
 		}
 	}
 	if err := r.saveStatus(ctx, ew, previous); err != nil {
@@ -124,8 +160,13 @@ func (r *ElasticWorkloadReconciler) reconcileHandoff(ctx context.Context, ew *ai
 			}
 		}
 	}
+	wasStalled := apimeta.IsStatusConditionTrue(ew.Status.Conditions, conditionHandoffStalled)
 	if _, err := r.reportWorkloads(ctx, ew); err != nil {
 		return ctrl.Result{}, err
+	}
+	if !wasStalled && apimeta.IsStatusConditionTrue(ew.Status.Conditions, conditionHandoffStalled) {
+		r.event(ew, corev1.EventTypeWarning, reasonHandoffPhaseTimeout,
+			"Handoff phase exceeded its deadline; committed targets are retained; inspect workloads before manual recovery")
 	}
 	if ew.Status.Handoff == nil {
 		return ctrl.Result{RequeueAfter: tickInterval}, nil
@@ -145,7 +186,7 @@ func (r *ElasticWorkloadReconciler) advanceCheckpoint(ctx context.Context, ew *a
 	}
 	if err == nil && status.CheckpointID >= h.CheckpointID {
 		now := metav1.Now()
-		h.Phase, h.CheckpointedAt, h.CheckpointStep = handoffReleasing, &now, status.Step
+		h.Phase, h.CheckpointedAt, h.CheckpointStep, h.PhaseStartedAt = handoffReleasing, &now, status.Step, &now
 		r.event(ew, corev1.EventTypeNormal, "CheckpointCompleted",
 			fmt.Sprintf("checkpoint %d saved at step %d after %s", h.CheckpointID, status.Step, now.Sub(h.RequestedAt.Time).Round(time.Millisecond)))
 		return
@@ -157,6 +198,8 @@ func (r *ElasticWorkloadReconciler) advanceCheckpoint(ctx context.Context, ew *a
 		return
 	}
 	h.Phase, h.CheckpointTimedOut = handoffReleasing, true
+	now := metav1.Now()
+	h.PhaseStartedAt = &now
 	message := fmt.Sprintf("checkpoint %d not confirmed within %ds; releasing without it", h.CheckpointID, timeout)
 	if err != nil {
 		message += ": " + err.Error()

@@ -151,7 +151,8 @@ class Run:
         self.record(label, phases=phases, handoff_event=handoff_event,
                     requested_checkpoint=requested, last_checkpoint_before_resume=last_saved, resume=resume,
                     resumed_from_saved_step=bool(last_saved) and resume["step"] == last_saved["step"],
-                    training_paused_s=round(resume["time"] - (requested or last_saved or resume)["time"], 2),
+                    checkpoint_request_to_resume_s=round(resume["time"] - (requested or last_saved or resume)["time"], 2),
+                    training_paused_s=round(resume["time"] - (last_saved or resume)["time"], 2),
                     total_s=round(time.time() - started, 1))
         if not last_saved or resume["step"] != last_saved["step"]:
             raise AssertionError(f"{label}: trainers did not resume from the last checkpoint")

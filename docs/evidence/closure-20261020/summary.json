@@ -1,0 +1,53 @@
+{
+  "status": "passed_declared_functional_scope",
+  "baseline_commit": "9b2ceb4",
+  "working_tree_changes": true,
+  "unit": {
+    "status": "passed",
+    "top_level_test_functions": 46,
+    "test_entries_including_subtests": 71,
+    "failed": 0,
+    "skipped_in_selected_run": 0,
+    "selection_file": "selected-tests.txt",
+    "log": "unit.jsonl"
+  },
+  "race": {
+    "status": "passed",
+    "same_selection_as_unit": true,
+    "log": "race.jsonl"
+  },
+  "lint": {"status": "passed", "issues": 0, "log": "lint.log"},
+  "build": {"status": "passed", "log": "build.log"},
+  "vet": {"status": "passed", "log": "vet.log"},
+  "generated_crd": {
+    "status": "passed_offline",
+    "checks": ["Kubernetes CRD schema validation including CEL", "structural defaults keep spec and handoff snapshot equal"]
+  },
+  "initial_envtest_attempt": {
+    "status": "environment_blocked_before_full_access",
+    "log": "envtest-blocked.log"
+  },
+  "excluded_from_unit_selection": [
+    "TestControllers",
+    "TestRouterMetrics_*",
+    "TestHTTPCheckpointClient_*",
+    "TestMetricValidation_*"
+  ],
+  "full_suite_after_full_access": {
+    "status": "passed",
+    "command": "GOTOOLCHAIN=go1.26.9 make test",
+    "top_level_test_functions_including_envtest": 55,
+    "controller_statement_coverage_percent": 87.7,
+    "log": "full-test.log",
+    "race_log": "full-race.jsonl",
+    "race_test_entries_including_subtests": 102
+  },
+  "kind_real_cpu_handoff": {"status": "passed", "planned_directions": 2, "resumed_from_latest_saved_step": true, "training_pause_seconds": [18.98, 74.76], "report": "kind-handoff.json", "timing_note": "pause measured from last checkpoint before resume, not from the earlier checkpoint request; original raw report preserved"},
+  "kind_fault_injection": {"status": "passed", "checks": 8, "protocol_stub_not_real_training": true, "owned_resources_cleaned": true, "report": "kind-faults.json"},
+  "kind_true_sigkill": {"status": "passed", "resumed_step": 200, "estimated_steps_lost": 55, "recovery_seconds": 4.2, "report": "kind-sigkill.json"},
+  "image": {"tag": "ew-operator:closure-20261020-v2", "entrypoint": "/manager", "report": "image.json", "initial_inherited_entrypoint_run_excluded": true},
+  "not_retested": ["GPU handoff", "multi-node", "lossless inference draining", "Kueue independent experiment"],
+  "deployed": true,
+  "full_acceptance": true,
+  "acceptance_scope": "single-node CPU orchestration and recovery protocol; not production readiness, GPU performance or lossless scaling"
+}

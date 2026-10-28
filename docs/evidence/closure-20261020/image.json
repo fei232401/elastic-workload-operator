@@ -1,0 +1,12 @@
+{
+  "image": "ew-operator:closure-20261020-v2",
+  "image_id": "sha256:35205bf6de17a5375b4d03377e293fe666760cca16f2e3bc2f5306e75b7a5a08",
+  "entrypoint": [
+    "/manager"
+  ],
+  "local_binary_sha256": "ce905a68b0499cb7a04d229b8e15e3ae2c883d6770c4df5970635c1dcec6645f",
+  "pod": "ew-controller-766966cb97-r989s",
+  "runtime_image_id": "docker.io/library/import-2026-10-21@sha256:e4d7a3abdabdd1dcfa8a456fa3d158f8f6453e018ffb0a660c7b1b9a060bb4e6",
+  "build_method": "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build; local base ew-operator:handoff-v1, COPY manager /manager, explicit ENTRYPOINT /manager; no network pull",
+  "invalid_initial_build": "initial inherited /app entrypoint ran old binary; interrupted and excluded; see kind-handoff-invalid-entrypoint.*"
+}

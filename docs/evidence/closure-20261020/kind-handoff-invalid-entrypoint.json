@@ -1,0 +1,111 @@
+{
+  "started_at": "2026-10-21T03:20:12.959154+00:00",
+  "steps": [
+    {
+      "name": "prepared",
+      "at": "2026-10-21T03:20:14.821405+00:00",
+      "controller": "ew-operator:closure-20261020"
+    },
+    {
+      "name": "initial",
+      "at": "2026-10-21T03:21:03.987450+00:00",
+      "resume": {
+        "time": 1792552827.3529985,
+        "event": "resume",
+        "step": 0,
+        "world_size": 2
+      },
+      "statefulset_ready": 2
+    },
+    {
+      "name": "overload_handoff",
+      "at": "2026-10-21T03:21:33.201131+00:00",
+      "phases": [
+        {
+          "phase": "CheckpointRequested",
+          "seen_after_s": 5.3
+        },
+        {
+          "phase": "Releasing",
+          "seen_after_s": 6.3
+        },
+        {
+          "phase": "Acquiring",
+          "seen_after_s": 7.3
+        }
+      ],
+      "handoff_event": "training 2->1, inference 1->2; checkpoint 1s, release 2s, total 3.576s",
+      "requested_checkpoint": {
+        "time": 1792552868.579906,
+        "event": "checkpoint",
+        "step": 59,
+        "checkpoint_id": 1792552868473,
+        "reason": "requested",
+        "world_size": 2
+      },
+      "last_checkpoint_before_resume": {
+        "time": 1792552870.0872097,
+        "event": "checkpoint",
+        "step": 60,
+        "checkpoint_id": 1792552868473,
+        "reason": "member_leaving",
+        "world_size": 2
+      },
+      "resume": {
+        "time": 1792552889.5722718,
+        "event": "resume",
+        "step": 60,
+        "world_size": 1
+      },
+      "resumed_from_saved_step": true,
+      "training_paused_s": 20.99,
+      "total_s": 29.2
+    },
+    {
+      "name": "recovery_handoff",
+      "at": "2026-10-21T03:23:29.083324+00:00",
+      "phases": [
+        {
+          "phase": "CheckpointRequested",
+          "seen_after_s": 5.3
+        },
+        {
+          "phase": "Releasing",
+          "seen_after_s": 6.3
+        },
+        {
+          "phase": "Acquiring",
+          "seen_after_s": 38.9
+        }
+      ],
+      "handoff_event": "training 1->2, inference 2->1; checkpoint 2s, release 32s, total 1m50.306s",
+      "requested_checkpoint": {
+        "time": 1792552898.1494098,
+        "event": "checkpoint",
+        "step": 67,
+        "checkpoint_id": 1792552897880,
+        "reason": "requested",
+        "world_size": 1
+      },
+      "last_checkpoint_before_resume": {
+        "time": 1792552935.6179028,
+        "event": "checkpoint",
+        "step": 98,
+        "checkpoint_id": 1792552897880,
+        "reason": "member_leaving",
+        "world_size": 1
+      },
+      "resume": {
+        "time": 1792553007.742556,
+        "event": "resume",
+        "step": 98,
+        "world_size": 2
+      },
+      "resumed_from_saved_step": true,
+      "training_paused_s": 109.59,
+      "total_s": 115.9
+    }
+  ],
+  "status": "running",
+  "finished_at": "2026-10-21T03:23:58.692097+00:00"
+}

@@ -1,0 +1,31 @@
+PASS prepared {"controller": "ew-operator:closure-20261020"}
+PASS initial {"resume": {"time": 1792552827.3529985, "event": "resume", "step": 0, "world_size": 2}, "statefulset_ready": 2}
+PASS overload_handoff {"phases": [{"phase": "CheckpointRequested", "seen_after_s": 5.3}, {"phase": "Releasing", "seen_after_s": 6.3}, {"phase": "Acquiring", "seen_after_s": 7.3}], "handoff_event": "training 2->1, inference 1->2; checkpoint 1s, release 2s, total 3.576s", "requested_checkpoint": {"time": 1792552868.579906, "event": "checkpoint", "step": 59, "checkpoint_id": 1792552868473, "reason": "requested", "world_si
+PASS recovery_handoff {"phases": [{"phase": "CheckpointRequested", "seen_after_s": 5.3}, {"phase": "Releasing", "seen_after_s": 6.3}, {"phase": "Acquiring", "seen_after_s": 38.9}], "handoff_event": "training 1->2, inference 2->1; checkpoint 2s, release 32s, total 1m50.306s", "requested_checkpoint": {"time": 1792552898.1494098, "event": "checkpoint", "step": 67, "checkpoint_id": 1792552897880, "reason": "requested", "wo
+Traceback (most recent call last):
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 206, in <module>
+    Run(args.kubeconfig, Path(__file__).resolve().parents[1], args.image, args.trainer).run()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 184, in run
+    self.wait("progress after recovery", lambda: sum(e["event"] == "progress" for e in self.events()) >= 3, 300)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 36, in wait
+    value = predicate()
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 184, in <lambda>
+    self.wait("progress after recovery", lambda: sum(e["event"] == "progress" for e in self.events()) >= 3, 300)
+                                                                                       ~~~~~~~~~~~^^
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 79, in events
+    raw = self.kubectl("exec", f"{NAME}-training-0", "--", "cat", "/ckpt/events.jsonl", check=False)
+  File "/home/user/projects/elastic-workload-operator/scripts/validate_handoff.py", line 24, in kubectl
+    result = subprocess.run(command, input=body, text=True, capture_output=True, timeout=timeout)
+  File "/home/user/miniconda3/lib/python3.14/subprocess.py", line 557, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/miniconda3/lib/python3.14/subprocess.py", line 1221, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/user/miniconda3/lib/python3.14/subprocess.py", line 2153, in _communicate
+    ready = selector.select(timeout)
+  File "/home/user/miniconda3/lib/python3.14/selectors.py", line 398, in select
+    fd_event_list = self._selector.poll(timeout)
+KeyboardInterrupt

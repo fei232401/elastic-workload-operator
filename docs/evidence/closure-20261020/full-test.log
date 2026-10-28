@@ -1,0 +1,11 @@
+"/home/user/projects/elastic-workload-operator/bin/controller-gen" rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
+"/home/user/projects/elastic-workload-operator/bin/controller-gen" object:headerFile="hack/boilerplate.go.txt",year=2026 paths="./..."
+go fmt ./...
+go vet ./...
+Setting up envtest binaries for Kubernetes version 1.36...
+/home/user/projects/elastic-workload-operator/bin/k8s/1.36.2-linux-amd64KUBEBUILDER_ASSETS="/home/user/projects/elastic-workload-operator/bin/k8s/1.36.2-linux-amd64" go test $(go list ./... | grep -v /e2e) -coverprofile cover.out
+	github.com/fei/elastic-workload-operator/api/v1alpha1		coverage: 0.0% of statements
+	github.com/fei/elastic-workload-operator/cmd		coverage: 0.0% of statements
+ok  	github.com/fei/elastic-workload-operator/internal/controller	5.959s	coverage: 87.7% of statements
+	github.com/fei/elastic-workload-operator/test/mockrouter		coverage: 0.0% of statements
+	github.com/fei/elastic-workload-operator/test/utils		coverage: 0.0% of statements

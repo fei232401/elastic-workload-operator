@@ -94,6 +94,22 @@ func (r *ElasticWorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if err := r.initializeAllocation(ctx, &ew); err != nil {
 		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "InitializationFailed", err))
 	}
+	if ew.Status.Handoff != nil {
+		blocked, err := r.checkHandoffSpec(ctx, &ew)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if blocked {
+			condition := apimeta.FindStatusCondition(ew.Status.Conditions, conditionReady)
+			alreadyBlocked := condition != nil && condition.Reason == reasonHandoffSpecChanged
+			cause := fmt.Errorf("spec changed during handoff; restore status.handoff.specSnapshot before resuming")
+			err = r.reportFailure(ctx, &ew, reasonHandoffSpecChanged, cause)
+			if err == nil && !alreadyBlocked {
+				r.event(&ew, corev1.EventTypeWarning, reasonHandoffSpecChanged, cause.Error())
+			}
+			return ctrl.Result{RequeueAfter: tickInterval}, err
+		}
+	}
 	if err := validateAllocation(&ew); err != nil {
 		return ctrl.Result{}, errors.Join(err, r.reportFailure(ctx, &ew, "InvalidAllocation", err))
 	}

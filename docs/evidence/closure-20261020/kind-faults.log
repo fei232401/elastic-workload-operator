@@ -1,0 +1,8 @@
+PASS spec_guard_CheckpointRequested
+PASS spec_guard_Releasing
+PASS releasing_timeout
+PASS restart_keeps_deadline
+PASS spec_guard_Acquiring
+PASS acquiring_timeout
+PASS fault_removal_recovers
+PASS timeout_events

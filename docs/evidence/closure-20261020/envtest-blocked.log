@@ -1,0 +1,108 @@
+Running Suite: Controller Suite - /home/user/projects/elastic-workload-operator/internal/controller
+==================================================================================================
+Random Seed: [1m1792550683[0m
+
+Will run [1m1[0m of [1m1[0m specs
+[38;5;243m------------------------------[0m
+[38;5;9m[BeforeSuite] [FAILED] [0.001 seconds][0m
+[38;5;9m[1m[BeforeSuite] [0m
+[38;5;243m/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:57[0m
+
+  [38;5;243mTimeline >>[0m
+  [1mSTEP:[0m bootstrapping test environment [38;5;243m@ 10/20/26 21:44:43.503[0m
+  2026-10-20T21:44:43-05:00	DEBUG	controller-runtime.test-env	starting control plane
+  2026-10-20T21:44:43-05:00	ERROR	controller-runtime.test-env	unable to start the controlplane	{"tries": 0, "error": "listen tcp 127.0.0.1:0: socket: operation not permitted"}
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).startControlPlane
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:391
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).Start
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:304
+  github.com/fei/elastic-workload-operator/internal/controller.init.func2
+  	/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:80
+  github.com/onsi/ginkgo/v2/internal.extractBodyFunction.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/node.go:524
+  github.com/onsi/ginkgo/v2/internal.(*Suite).runNode.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/suite.go:945
+  2026-10-20T21:44:43-05:00	ERROR	controller-runtime.test-env	unable to start the controlplane	{"tries": 1, "error": "listen tcp 127.0.0.1:0: socket: operation not permitted"}
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).startControlPlane
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:391
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).Start
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:304
+  github.com/fei/elastic-workload-operator/internal/controller.init.func2
+  	/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:80
+  github.com/onsi/ginkgo/v2/internal.extractBodyFunction.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/node.go:524
+  github.com/onsi/ginkgo/v2/internal.(*Suite).runNode.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/suite.go:945
+  2026-10-20T21:44:43-05:00	ERROR	controller-runtime.test-env	unable to start the controlplane	{"tries": 2, "error": "listen tcp 127.0.0.1:0: socket: operation not permitted"}
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).startControlPlane
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:391
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).Start
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:304
+  github.com/fei/elastic-workload-operator/internal/controller.init.func2
+  	/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:80
+  github.com/onsi/ginkgo/v2/internal.extractBodyFunction.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/node.go:524
+  github.com/onsi/ginkgo/v2/internal.(*Suite).runNode.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/suite.go:945
+  2026-10-20T21:44:43-05:00	ERROR	controller-runtime.test-env	unable to start the controlplane	{"tries": 3, "error": "listen tcp 127.0.0.1:0: socket: operation not permitted"}
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).startControlPlane
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:391
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).Start
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:304
+  github.com/fei/elastic-workload-operator/internal/controller.init.func2
+  	/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:80
+  github.com/onsi/ginkgo/v2/internal.extractBodyFunction.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/node.go:524
+  github.com/onsi/ginkgo/v2/internal.(*Suite).runNode.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/suite.go:945
+  2026-10-20T21:44:43-05:00	ERROR	controller-runtime.test-env	unable to start the controlplane	{"tries": 4, "error": "listen tcp 127.0.0.1:0: socket: operation not permitted"}
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).startControlPlane
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:391
+  sigs.k8s.io/controller-runtime/pkg/envtest.(*Environment).Start
+  	/home/user/go/pkg/mod/sigs.k8s.io/controller-runtime@v0.24.1/pkg/envtest/server.go:304
+  github.com/fei/elastic-workload-operator/internal/controller.init.func2
+  	/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:80
+  github.com/onsi/ginkgo/v2/internal.extractBodyFunction.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/node.go:524
+  github.com/onsi/ginkgo/v2/internal.(*Suite).runNode.func3
+  	/home/user/go/pkg/mod/github.com/onsi/ginkgo/v2@v2.27.4/internal/suite.go:945
+  [38;5;9m[FAILED][0m in [BeforeSuite] - /home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:81 [38;5;243m@ 10/20/26 21:44:43.504[0m
+  [38;5;243m<< Timeline[0m
+
+  [38;5;9m[FAILED] Unexpected error:
+      <*fmt.wrapError | 0x23d53edcee0>: 
+      unable to start control plane itself: failed to start the controlplane. retried 5 times: listen tcp 127.0.0.1:0: socket: operation not permitted
+      {
+          msg: "unable to start control plane itself: failed to start the controlplane. retried 5 times: listen tcp 127.0.0.1:0: socket: operation not permitted",
+          err: <*fmt.wrapError | 0x23d53edcec0>{
+              msg: "failed to start the controlplane. retried 5 times: listen tcp 127.0.0.1:0: socket: operation not permitted",
+              err: <*net.OpError | 0x23d544816d0>{
+                  Op: "listen",
+                  Net: "tcp",
+                  Source: nil,
+                  Addr: <*net.TCPAddr | 0x23d5411f6b0>{
+                      IP: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 127, 0, 0, 1],
+                      Port: 0,
+                      Zone: "",
+                  },
+                  Err: <*os.SyscallError | 0x23d53edce80>{
+                      Syscall: "socket",
+                      Err: <syscall.Errno>0x1,
+                  },
+              },
+          },
+      }
+  occurred[0m
+  [38;5;9mIn [1m[BeforeSuite][0m[38;5;9m at: [1m/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:81[0m [38;5;243m@ 10/20/26 21:44:43.504[0m
+[38;5;243m------------------------------[0m
+
+[38;5;9m[1mSummarizing 1 Failure:[0m
+  [38;5;9m[FAIL][0m [38;5;9m[1m[BeforeSuite] [0m
+  [38;5;243m/home/user/projects/elastic-workload-operator/internal/controller/suite_test.go:81[0m
+
+[38;5;9m[1mRan 0 of 1 Specs in 0.001 seconds[0m
+[38;5;9m[1mFAIL![0m -- [38;5;14m[1mA BeforeSuite node failed so all tests were skipped.[0m
+--- FAIL: TestControllers (0.00s)
+FAIL
+FAIL	github.com/fei/elastic-workload-operator/internal/controller	0.019s
+FAIL

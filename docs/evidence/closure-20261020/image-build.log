@@ -1,0 +1,34 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 111B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/ew-operator:handoff-v1
+#2 DONE 0.2s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 31B done
+#4 DONE 0.0s
+
+#5 [1/2] FROM docker.io/library/ew-operator:handoff-v1@sha256:76e9c6cbfd6a519c162fdf63449cbc6caffe8c495b55f836c26d5976c6a3db87
+#5 resolve docker.io/library/ew-operator:handoff-v1@sha256:76e9c6cbfd6a519c162fdf63449cbc6caffe8c495b55f836c26d5976c6a3db87 0.0s done
+#5 DONE 0.0s
+
+#6 [2/2] COPY manager /manager
+#6 CACHED
+
+#7 exporting to image
+#7 exporting layers done
+#7 exporting manifest sha256:d0b9ffbaf2904aac26d1e04a317ea0114a593c894ac2310459de8e8fc425eb9e 0.0s done
+#7 exporting config sha256:9614946aba89671977cfb27e10f6da3792f5cbd5bec2dda9e4b61bb63f8e543e 0.0s done
+#7 exporting attestation manifest sha256:830cda740e3b93c41197f52e7ea0466101c892b0a25205c0ad2b8f42af1966b7 0.0s done
+#7 exporting manifest list sha256:35205bf6de17a5375b4d03377e293fe666760cca16f2e3bc2f5306e75b7a5a08
+#7 exporting manifest list sha256:35205bf6de17a5375b4d03377e293fe666760cca16f2e3bc2f5306e75b7a5a08 0.0s done
+#7 naming to docker.io/library/ew-operator:closure-20261020-v2 done
+#7 unpacking to docker.io/library/ew-operator:closure-20261020-v2 done
+#7 DONE 0.1s

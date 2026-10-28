@@ -25,6 +25,7 @@ func (r *ElasticWorkloadReconciler) commit(ctx context.Context, ew *aiinfrav1alp
 		ew.Status.Handoff = &aiinfrav1alpha1.Handoff{
 			Phase: handoffCheckpointRequested, From: from, To: ew.Status.DesiredReplicas,
 			CheckpointID: ew.Status.LastCheckpointID, RequestedAt: now,
+			PhaseStartedAt: &now, SpecSnapshot: ew.Spec.DeepCopy(),
 		}
 		if from.Training == 0 {
 			ew.Status.Handoff.Phase = handoffReleasing

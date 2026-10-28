@@ -2,6 +2,8 @@
 
 一个基于 Go / controller-runtime 的 Kubernetes Operator：根据推理服务的 TTFT P95，在同一份资源预算内调整训练副本和推理副本，并在训练成员变化前先完成 checkpoint 握手。
 
+这里展示核心实现、复现实验与验证证据；实验记录为 2026-10 的项目快照。
+
 > **验证范围先说清楚**：所有端到端结果都来自 **Kind 单节点集群**，训练是 **CPU 上的 PyTorch DDP（gloo）小模型**，推理侧在握手验收中是 busybox 占位容器，TTFT 由 mock Router 人为切换。验证的是**编排协议和恢复语义**，不是 GPU 性能、NCCL 通信或多节点存储。
 
 ## 要解决的问题
@@ -105,7 +107,8 @@ flowchart LR
 补充规则：
 
 - 两个方向都握手：推理扩容时先缩训练再扩推理；归还时先缩推理再扩训练。训练扩容前也要存盘，因为新成员加入同样会触发全员重启。
-- 握手期间暂停新决策。
+- 握手期间暂停新决策。提交握手时把完整 spec 保存到 `status.handoff.specSnapshot`；任何 spec 变更都会在修改子资源前冻结交接，报告 `HandoffSpecChanged`，恢复原 spec 后继续，不自动重规划。旧版本进行中的握手会把升级后第一次观察到的 spec 保存为基线，无法追溯升级前的修改。
+- `spec.scalingPolicy.handoffTimeoutSeconds` 默认 300 秒，分别约束 Releasing 和 Acquiring 的等待时间。阶段开始时间持久化；超过时间报告 `HandoffStalled=True`、`Degraded` 和一次 Warning 事件，不清除目标、不跳过资源释放、不自动回滚；继续观察并在阻塞解除后自动推进。300 秒是覆盖既有约 110 秒演示的保守初值，不是实测 SLA。CheckpointRequested 仍使用独立的 checkpoint 超时。
 - 训练原来是 0 副本时跳过存盘。
 - 没配置 `spec.training.checkpoint` 时，行为和旧版一致（两边直接同时改）。
 
@@ -133,11 +136,49 @@ flowchart LR
 ## 已知问题
 
 1. **torchrun 扩容组网竞态（约 72 秒暂停）**：扩容时 pod-0 的 agent 在 `_assign_worker_ranks` 等 role_info，pod-1 在 `RendezvousStoreInfo.build` 等 MASTER_ADDR，双方各自 60 秒 `DistStoreError` 超时后退出，容器重启后第二轮组网才成功。缩容方向没遇到。**未修复**。可能的方向：把 rendezvous store 从 pod-0 移到独立服务（例如 etcd 后端）；扩容时让全体训练进程一起重启；缩短 store 超时。
-2. **握手的 Releasing / Acquiring 阶段没有超时**：例如推理 Pod 一直起不来，握手会一直停在 Acquiring。超时之后该回滚还是继续等，还没想清楚，暂不实现。
-3. **握手中途修改 spec 未处理**：握手进行中改了 CR 的上下限等字段，当前不会重新规划。
+2. **没有自动回滚**：阶段超时只标记异常并保留现场。配置冲突需要恢复握手快照；资源、镜像拉取、PVC、DNS 或终止异常需要修复对应依赖。坏镜像已经写入握手快照时，不能靠交接中换镜像来绕过保护，应按下面步骤停机重建。
+3. **没有自动重规划和无损缩容**：交接中的配置变更会冻结；推理侧没有在途排空握手，不能承诺正在执行的请求不受缩容影响。
 4. 其他边界：控制器是单副本；status 中的目标是单对象提交，两个子资源的实际变化不是原子的；Router 指标只来自单个 Router 进程；`prefixCaching=true` 当前报不支持；没有 scale 子资源。
 
 ## 快速开始
+
+### 交接异常的恢复步骤
+
+先观察 `status.handoff`、Conditions、Events 和两侧 Pod，确认阶段、checkpoint、Pod 数、Pending/Terminating 原因。不要清空 `status.handoff` 或手动把阶段改成 Acquiring，这会绕过先释放后获取的安全条件。
+
+`HandoffSpecChanged` 时，先审阅 `status.handoff.specSnapshot`，确认愿意恢复原配置，再执行下列 JSON Patch。它检查 checkpointID，避免把旧快照用于另一轮交接；完成后再提交需要的新配置。以下变量必须改为自己的隔离集群和对象，不要对生产执行。
+
+```bash
+CONTEXT=kind-ew-recovery-lab
+NAMESPACE=ew-validation
+WORKLOAD=demo
+kubectl --context "$CONTEXT" -n "$NAMESPACE" get elasticworkload "$WORKLOAD" -o json |
+  jq -e 'if .status.handoff.specSnapshot == null then error("no handoff snapshot") else [{op:"test",path:"/status/handoff/checkpointID",value:.status.handoff.checkpointID},{op:"replace",path:"/spec",value:.status.handoff.specSnapshot}] end' > /tmp/ew-restore-spec.json
+```
+
+仅在上一条成功且人工审阅补丁后执行：
+
+```bash
+kubectl --context "$CONTEXT" -n "$NAMESPACE" patch elasticworkload "$WORKLOAD" --type=json --patch-file /tmp/ew-restore-spec.json
+```
+
+`HandoffPhaseTimeout` 时先修复外部依赖；控制器继续观察，条件满足后会自动进入下一阶段或完成，不需要手动解除超时标记。若问题只能通过修改 spec 解决，先确认最新 checkpoint、记录 PVC 和现场、接受推理中断，再正常删除 CR，等待其受管 Pod 全部退出后用修正后的清单重建，复用原有独立 PVC。不要强制移除 finalizer，不删除 PVC；删除 CR 本身不会请求额外存盘，不能承诺这条人工重建路径零丢失。
+
+### 2026-10-20 收口验证边界
+
+本轮补充阶段超时、spec 冻结与恢复、重启后继续、旧状态迁移、快照写失败及 CRD schema/defaults 回归。首次受限会话只跑离线子集；切换 full access 后，`make test`、完整 controller race、lint/build/vet 均通过：**55 个顶层测试函数（含 envtest 入口），race 含子用例 102 条，controller 语句覆盖率 87.7%**。旧 48 个函数/87.0% 是历史结果。
+
+新版 `ew-operator:closure-20261020-v2` 已部署隔离 Kind，真实 CPU DDP 的正反向交接均从最近存盘步恢复；从交接前最后存盘到恢复约 19 秒/75 秒。独立故障脚本 `scripts/validate_closure.py` 的 8 项检查通过：三阶段 spec 变更冻结/恢复、释放超时、重启不重置期限、获取超时、解除故障后继续及 Warning 事件。故障脚本使用 checkpoint HTTP 协议桩和 readiness gate，不冒充真实训练；真实训练另由 validate_handoff.py 验证。
+
+真正 SIGKILL worker 的补验恢复到第 200 步，按杀进程前进度速率估算丢失约 55 步（37.2 秒训练量），4.2 秒恢复。修正 crash_trainer.sh 的 heredoc 临时路径和超时失败退出，使用带空格 TMPDIR 实跑成功。`training_paused_s` 现在从恢复前最后存盘计时；请求存盘到恢复另记 `checkpoint_request_to_resume_s`，不把期间仍在训练的时间都算停顿。
+
+日志、JUnit/JSON、镜像入口与源码哈希在 `docs/evidence/closure-20261020/`。初次镜像继承旧 `/app` 入口误跑旧二进制，该轮已中断并排除，最终镜像显式使用 `/manager`；不拿有新 tag 的旧程序当验收。最终功能验收只覆盖单节点 CPU 编排协议，不覆盖 GPU 交割、无损缩容、多节点或生产 SLA，约一分钟级扩容组网停顿仍是已知边界。
+
+```bash
+python3 scripts/validate_closure.py --kubeconfig .state/validation.kubeconfig --image ew-operator:closure-20261020-v2
+```
+
+该脚本只对已部署指定镜像的隔离 Kind 执行，会创建 closure-probe、独立指标源和临时 PVC，故障解除并成功后清理自有资源；发现同名对象/PVC 时拒绝直接覆盖。不要把参数换成生产集群。
 
 ### 单元测试
 
